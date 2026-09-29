@@ -1,5 +1,44 @@
 window.Game = window.Game || {};
 
+// ==========================================
+// 1. EMBEDDED ARENA MAP DATA
+// Paste the 112k characters you copied right after the '=' below:
+// ==========================================
+window.Game.DEFAULT_MAP_DATA = /* PASTE HERE (Ctrl+V) */;
+
+// ==========================================
+// 2. MAP DATA LOADER
+// ==========================================
+window.Game.loadMapData = function() {
+  // 1. Try browser localStorage first (for local editing)
+  try {
+    const saved = localStorage.getItem('resurgence_custom_map') || localStorage.getItem('arena_map_data');
+    if (saved) return JSON.parse(saved);
+  } catch (e) {
+    console.warn("Failed to parse localStorage map data:", e);
+  }
+
+  // 2. Fall back to embedded default map (for GitHub Pages and all connected peers)
+  if (window.Game.DEFAULT_MAP_DATA && window.Game.DEFAULT_MAP_DATA.levels) {
+    return JSON.parse(JSON.stringify(window.Game.DEFAULT_MAP_DATA));
+  }
+
+  // 3. Fallback bare-minimum structure if nothing is loaded
+  return {
+    cols: 60,
+    rows: 40,
+    levels: {
+      floor1: { floors: {}, solids: {}, walls: [], windows: [], doors: [], stairs: [], chests: [], kiosks: [], spawns: [] },
+      floor2: { floors: {}, solids: {}, walls: [], windows: [], doors: [], stairs: [], chests: [], kiosks: [], spawns: [] },
+      roof:   { floors: {}, solids: {}, walls: [], windows: [], doors: [], stairs: [], chests: [], kiosks: [], spawns: [] }
+    },
+    buildingZones: {}
+  };
+};
+
+// ==========================================
+// 3. MAP RENDERER
+// ==========================================
 window.Game.MapRenderer = {
   initDoors(mapData) {
     ['floor1', 'floor2', 'roof'].forEach(flr => {
