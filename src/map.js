@@ -2,15 +2,15 @@ window.Game = window.Game || {};
 
 // ==========================================
 // 1. EMBEDDED ARENA MAP DATA
-// Paste the 112k characters you copied right after the '=' below:
+// Paste your 112k-character JSON object right after the '=':
 // ==========================================
-window.Game.DEFAULT_MAP_DATA = /* PASTE HERE (Ctrl+V) */;
+window.Game.DEFAULT_MAP_DATA = /* PASTE_YOUR_112K_JSON_HERE */;
 
 // ==========================================
 // 2. MAP DATA LOADER
 // ==========================================
 window.Game.loadMapData = function() {
-  // 1. Try browser localStorage first (for local editing)
+  // 1. Try local storage (for local editor workflows)
   try {
     const saved = localStorage.getItem('resurgence_custom_map') || localStorage.getItem('arena_map_data');
     if (saved) return JSON.parse(saved);
@@ -18,7 +18,7 @@ window.Game.loadMapData = function() {
     console.warn("Failed to parse localStorage map data:", e);
   }
 
-  // 2. Fall back to embedded default map (for GitHub Pages and all connected peers)
+  // 2. Fall back to embedded map (for GitHub Pages and remote peers)
   if (window.Game.DEFAULT_MAP_DATA && window.Game.DEFAULT_MAP_DATA.levels) {
     return JSON.parse(JSON.stringify(window.Game.DEFAULT_MAP_DATA));
   }
