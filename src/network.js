@@ -1,91 +1,101 @@
 window.Game = window.Game || {};
+window.Game.Network = window.Game.Network || {};
 
-window.Game.Network = {
-  peer: null,
-  myId: null,
-  isHost: false,
-  roomCode: null,
-  connections: {}, // peerId -> DataConnection
-  hostConn: null,  // guest only
-  onPlayerJoin: null,
-  onPlayerLeave: null,
-  onStateUpdate: null,
-  onActionReceive: null,
-  onMatchStart: null,
+(function() {
+  const net = window.Game.Network;
 
-  generateRoomCode() {
+  net.peer = null;
+  net.myId = null;
+  net.isHost = false;
+  net.connections = {}; // Host stores all client connections: { peerId: conn }
+  net.hostConn = null;  // Clients store connection to Host
+
+  net.onActionReceive = null;
+  net.onStateUpdate = null;
+  net.onPlayerJoin = null;
+  net.onPlayerLeave = null;
+
+  // Generate a clean 5-character room code
+  function generateRoomCode() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     let code = '';
     for (let i = 0; i < 5; i++) {
       code += chars.charAt(Math.floor(Math.random() * chars.length));
     }
     return code;
-  },
+  }
 
-  initHost(playerName, onReady) {
-    this.isHost = true;
-    this.roomCode = this.generateRoomCode();
-    const fullId = `arena-br-${this.roomCode}`;
+  // ==========================================
+  // HOST INITIALIZATION
+  // ==========================================
+  net.initHost = function(playerName, onReady) {
+    net.isHost = true;
+    const roomCode = generateRoomCode();
 
-    this.peer = new Peer(fullId);
+    // Prefix ensures uniqueness on public PeerJS cloud brokers
+    net.peer = new Peer('resurgence-' + roomCode);
 
-    this.peer.on('open', (id) => {
-      this.myId = id;
-      if (onReady) onReady(this.roomCode);
+    net.peer.on('open', (id) => {
+      net.myId = id;
+      console.log('[Network] Host online with Room Code:', roomCode);
+      if (onReady) onReady(roomCode);
     });
 
-    this.peer.on('connection', (conn) => {
+    net.peer.on('connection', (conn) => {
       conn.on('open', () => {
-        this.connections[conn.peer] = conn;
+        net.connections[conn.peer] = conn;
+        console.log('[Network] Client connected:', conn.peer);
 
+        // Listen for data from this client
         conn.on('data', (data) => {
-          this.handleHostIncomingData(conn.peer, data);
+          handleIncomingData(conn.peer, data);
         });
 
         conn.on('close', () => {
-          delete this.connections[conn.peer];
-          if (this.onPlayerLeave) this.onPlayerLeave(conn.peer);
+          console.log('[Network] Client disconnected:', conn.peer);
+          delete net.connections[conn.peer];
+          if (net.onPlayerLeave) net.onPlayerLeave(conn.peer);
+
+          // Notify remaining clients
+          net.sendAction('player_left', { id: conn.peer });
         });
       });
     });
 
-    this.peer.on('error', (err) => {
-      console.error('PeerJS Host Error:', err);
-      if (err.type === 'unavailable-id') {
-        this.initHost(playerName, onReady);
-      }
+    net.peer.on('error', (err) => {
+      console.error('[Network] Host Peer error:', err);
     });
-  },
+  };
 
-  initClient(playerName, roomCode, onConnected, onError) {
-    this.isHost = false;
-    this.roomCode = roomCode.trim().toUpperCase();
-    const targetHostId = `arena-br-${this.roomCode}`;
+  // ==========================================
+  // CLIENT INITIALIZATION
+  // ==========================================
+  net.initClient = function(playerName, roomCode, onConnected, onError) {
+    net.isHost = false;
+    net.peer = new Peer();
 
-    this.peer = new Peer();
-
-    this.peer.on('open', (id) => {
-      this.myId = id;
-      const conn = this.peer.connect(targetHostId, {
-        reliable: false // UDP transmission
-      });
-
-      this.hostConn = conn;
+    net.peer.on('open', (id) => {
+      net.myId = id;
+      const targetHostId = 'resurgence-' + roomCode.toUpperCase().trim();
+      const conn = net.peer.connect(targetHostId, { reliable: true });
 
       conn.on('open', () => {
-        conn.send({
-          type: 'handshake',
-          name: playerName
-        });
+        net.hostConn = conn;
+        console.log('[Network] Connected to Host:', targetHostId);
+
+        // Send handshake so host knows our name
+        net.sendAction('player_handshake', { id: net.myId, name: playerName });
+
         if (onConnected) onConnected();
       });
 
       conn.on('data', (data) => {
-        this.handleClientIncomingData(data);
+        handleIncomingData('host', data);
       });
 
       conn.on('close', () => {
-        if (this.onPlayerLeave) this.onPlayerLeave('host');
+        console.log('[Network] Disconnected from Host');
+        alert('Disconnected from host.');
       });
 
       conn.on('error', (err) => {
@@ -93,67 +103,101 @@ window.Game.Network = {
       });
     });
 
-    this.peer.on('error', (err) => {
-      console.error('PeerJS Client Error:', err);
+    net.peer.on('error', (err) => {
+      console.error('[Network] Client Peer error:', err);
       if (onError) onError(err);
     });
-  },
+  };
 
-  handleHostIncomingData(peerId, data) {
-    if (data.type === 'handshake') {
-      if (this.onPlayerJoin) this.onPlayerJoin(peerId, data.name);
-    } else if (data.type === 'input_sync') {
-      if (this.onStateUpdate) this.onStateUpdate(peerId, data);
-    } else if (data.type === 'player_action') {
-      if (this.onActionReceive) this.onActionReceive(peerId, data.action, data.payload);
+  // ==========================================
+  // MESSAGE ROUTING & RELAY (THE CRITICAL FIX)
+  // ==========================================
+  function handleIncomingData(senderId, data) {
+    if (!data) return;
+
+    // 1. Snapshot updates (World sync)
+    if (data.type === 'snapshot') {
+      if (net.onStateUpdate) net.onStateUpdate(senderId, data.payload);
+      return;
     }
-  },
 
-  handleClientIncomingData(data) {
-    if (data.type === 'world_snapshot') {
-      if (this.onStateUpdate) this.onStateUpdate('host', data);
-    } else if (data.type === 'match_start' || (data.type === 'event_broadcast' && data.event === 'match_start')) {
-      if (this.onMatchStart) this.onMatchStart(data.payload || data);
-    } else if (data.type === 'event_broadcast') {
-      if (this.onActionReceive) this.onActionReceive('host', data.event, data.payload);
+    // 2. Client Input (sent from client to Host)
+    if (data.type === 'client_input') {
+      if (net.onStateUpdate) net.onStateUpdate(senderId, data.payload);
+      return;
     }
-  },
 
-  broadcastSnapshot(snapshot) {
-    if (!this.isHost) return;
-    const packet = {
-      type: 'world_snapshot',
-      ...snapshot
-    };
-    for (const id in this.connections) {
-      if (this.connections[id].open) {
-        this.connections[id].send(packet);
+    // 3. Discrete Actions ('shoot', 'player_damaged', 'spawn_dropped_loot', etc.)
+    if (data.type === 'action') {
+      const { action, payload } = data;
+
+      // Handle Handshake
+      if (action === 'player_handshake' && net.isHost) {
+        if (net.onPlayerJoin) net.onPlayerJoin(payload.id, payload.name);
+        // Relay handshake to all other connected clients
+        net.sendAction('player_joined_lobby', payload, payload.id);
+        return;
       }
-    }
-  },
 
-  sendClientInput(inputState) {
-    if (this.isHost || !this.hostConn || !this.hostConn.open) return;
-    this.hostConn.send({
-      type: 'input_sync',
-      ...inputState
-    });
-  },
-
-  sendAction(action, payload) {
-    const packet = {
-      type: this.isHost ? 'event_broadcast' : 'player_action',
-      action: action,
-      event: action,
-      payload: payload
-    };
-
-    if (this.isHost) {
-      for (const id in this.connections) {
-        if (this.connections[id].open) this.connections[id].send(packet);
+      // If Host received an action from Client A, RELAY IT TO CLIENT B, C, etc.
+      if (net.isHost) {
+        for (const peerId in net.connections) {
+          if (peerId !== senderId) {
+            try {
+              net.connections[peerId].send(data);
+            } catch (e) {}
+          }
+        }
       }
-    } else if (this.hostConn && this.hostConn.open) {
-      this.hostConn.send(packet);
+
+      // Execute locally
+      if (net.onActionReceive) {
+        net.onActionReceive(senderId, action, payload);
+      }
     }
   }
-};
+
+  // Send an action to everyone
+  net.sendAction = function(action, payload, excludePeerId = null) {
+    const packet = { type: 'action', action, payload };
+
+    if (net.isHost) {
+      // Host broadcasts to all clients
+      for (const peerId in net.connections) {
+        if (peerId !== excludePeerId) {
+          try {
+            net.connections[peerId].send(packet);
+          } catch (e) {}
+        }
+      }
+      // Also execute on Host if it was triggered locally
+      if (excludePeerId === null && net.onActionReceive) {
+        net.onActionReceive(net.myId, action, payload);
+      }
+    } else {
+      // Client sends to Host (Host will relay to everyone else)
+      if (net.hostConn && net.hostConn.open) {
+        net.hostConn.send(packet);
+      }
+    }
+  };
+
+  // Host broadcasts authoritative world snapshots
+  net.broadcastSnapshot = function(snapshotPayload) {
+    if (!net.isHost) return;
+    const packet = { type: 'snapshot', payload: snapshotPayload };
+    for (const peerId in net.connections) {
+      try {
+        net.connections[peerId].send(packet);
+      } catch (e) {}
+    }
+  };
+
+  // Client sends their position/aim to Host
+  net.sendClientInput = function(inputPayload) {
+    if (net.isHost) return;
+    if (net.hostConn && net.hostConn.open) {
+      net.hostConn.send({ type: 'client_input', payload: inputPayload });
+    }
+  };
+})();
