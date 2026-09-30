@@ -4,7 +4,7 @@ window.Game = window.Game || {};
 // 1. EMBEDDED ARENA MAP DATA
 // Paste your 112k-character JSON object right after the '=':
 // ==========================================
-window.Game.DEFAULT_MAP_DATA = /* PASTE_YOUR_112K_JSON_HERE */;
+window.Game.DEFAULT_MAP_DATA = ; /* PASTE_YOUR_112K_JSON_HERE */;
 
 // ==========================================
 // 2. MAP DATA LOADER
