@@ -1,29 +1,25 @@
 window.Game = window.Game || {};
 
-// ==========================================
-// 1. EMBEDDED ARENA MAP DATA
-// Paste your 112k-character JSON object right after the '=':
-// ==========================================
-window.Game.DEFAULT_MAP_DATA = ; /* PASTE_YOUR_112K_JSON_HERE */;
-
-// ==========================================
-// 2. MAP DATA LOADER
-// ==========================================
-window.Game.loadMapData = function() {
-  // 1. Try local storage (for local editor workflows)
+// Asynchronously load the official map.json from the repository
+window.Game.loadMapData = async function() {
+  // 1. Try local storage override (if you're editing locally)
   try {
-    const saved = localStorage.getItem('resurgence_custom_map') || localStorage.getItem('arena_map_data');
-    if (saved) return JSON.parse(saved);
-  } catch (e) {
-    console.warn("Failed to parse localStorage map data:", e);
+    const local = localStorage.getItem('resurgence_custom_map') || localStorage.getItem('arena_map_data');
+    if (local) return JSON.parse(local);
+  } catch (e) {}
+
+  // 2. Fetch the map.json hosted on GitHub Pages
+  try {
+    const response = await fetch('./map.json?v=' + Date.now());
+    if (response.ok) {
+      const data = await response.json();
+      return data;
+    }
+  } catch (err) {
+    console.error("Failed to load map.json from server, using fallback:", err);
   }
 
-  // 2. Fall back to embedded map (for GitHub Pages and remote peers)
-  if (window.Game.DEFAULT_MAP_DATA && window.Game.DEFAULT_MAP_DATA.levels) {
-    return JSON.parse(JSON.stringify(window.Game.DEFAULT_MAP_DATA));
-  }
-
-  // 3. Fallback bare-minimum structure if nothing is loaded
+  // 3. Emergency fallback if offline
   return {
     cols: 60,
     rows: 40,
@@ -36,11 +32,9 @@ window.Game.loadMapData = function() {
   };
 };
 
-// ==========================================
-// 3. MAP RENDERER
-// ==========================================
 window.Game.MapRenderer = {
   initDoors(mapData) {
+    if (!mapData || !mapData.levels) return;
     ['floor1', 'floor2', 'roof'].forEach(flr => {
       const level = mapData.levels[flr];
       if (level && level.doors) {
@@ -57,6 +51,7 @@ window.Game.MapRenderer = {
   },
 
   updateDoors(dt, mapData) {
+    if (!mapData || !mapData.levels) return;
     ['floor1', 'floor2', 'roof'].forEach(flr => {
       const level = mapData.levels[flr];
       if (level && level.doors) {
@@ -79,37 +74,38 @@ window.Game.MapRenderer = {
 
   drawLevel(ctx, mapData, currentFloor) {
     const cfg = window.Game.CONFIG;
-    const maxCols = mapData.cols || cfg.MAP_COLS;
-    const maxRows = mapData.rows || cfg.MAP_ROWS;
+    const maxCols = (mapData && mapData.cols) || cfg.MAP_COLS;
+    const maxRows = (mapData && mapData.rows) || cfg.MAP_ROWS;
     const mapWidth = maxCols * cfg.TILE_SIZE;
     const mapHeight = maxRows * cfg.TILE_SIZE;
 
-    // Ground void fill
     ctx.fillStyle = '#0f121a';
     ctx.fillRect(0, 0, mapWidth, mapHeight);
 
+    if (!mapData || !mapData.levels) return;
     const level = mapData.levels[currentFloor];
     if (!level) return;
 
-    // 1. Floors
-    for (const [key, color] of Object.entries(level.floors)) {
-      const [c, r] = key.split(',').map(Number);
-      if (c < maxCols && r < maxRows) {
-        ctx.fillStyle = color;
-        ctx.fillRect(c * cfg.TILE_SIZE, r * cfg.TILE_SIZE, cfg.TILE_SIZE, cfg.TILE_SIZE);
+    if (level.floors) {
+      for (const [key, color] of Object.entries(level.floors)) {
+        const [c, r] = key.split(',').map(Number);
+        if (c < maxCols && r < maxRows) {
+          ctx.fillStyle = color;
+          ctx.fillRect(c * cfg.TILE_SIZE, r * cfg.TILE_SIZE, cfg.TILE_SIZE, cfg.TILE_SIZE);
+        }
       }
     }
 
-    // 2. Solids
-    for (const [key, color] of Object.entries(level.solids)) {
-      const [c, r] = key.split(',').map(Number);
-      if (c < maxCols && r < maxRows) {
-        ctx.fillStyle = color;
-        ctx.fillRect(c * cfg.TILE_SIZE, r * cfg.TILE_SIZE, cfg.TILE_SIZE, cfg.TILE_SIZE);
+    if (level.solids) {
+      for (const [key, color] of Object.entries(level.solids)) {
+        const [c, r] = key.split(',').map(Number);
+        if (c < maxCols && r < maxRows) {
+          ctx.fillStyle = color;
+          ctx.fillRect(c * cfg.TILE_SIZE, r * cfg.TILE_SIZE, cfg.TILE_SIZE, cfg.TILE_SIZE);
+        }
       }
     }
 
-    // 3. Stairs
     if (level.stairs) {
       for (const st of level.stairs) {
         ctx.save();
@@ -147,7 +143,6 @@ window.Game.MapRenderer = {
       }
     }
 
-    // 4. Thin Walls
     if (level.walls) {
       for (const w of level.walls) {
         ctx.strokeStyle = w.color;
@@ -159,7 +154,6 @@ window.Game.MapRenderer = {
       }
     }
 
-    // 5. Windows
     if (level.windows) {
       for (const win of level.windows) {
         ctx.strokeStyle = '#38bdf8';
@@ -171,7 +165,6 @@ window.Game.MapRenderer = {
       }
     }
 
-    // 6. Doors
     if (level.doors) {
       for (const d of level.doors) {
         ctx.save();
@@ -194,7 +187,6 @@ window.Game.MapRenderer = {
       }
     }
 
-    // 7. Arena Border
     ctx.strokeStyle = '#38bdf8';
     ctx.lineWidth = 2;
     ctx.strokeRect(0, 0, mapWidth, mapHeight);
