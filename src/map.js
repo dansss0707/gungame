@@ -1,25 +1,24 @@
 window.Game = window.Game || {};
 
-// Asynchronously load the official map.json from the repository
+// Asynchronously load map.json from the repository
 window.Game.loadMapData = async function() {
-  // 1. Try local storage override (if you're editing locally)
+  // 1. Check local storage first (useful if you're testing editor changes locally)
   try {
     const local = localStorage.getItem('resurgence_custom_map') || localStorage.getItem('arena_map_data');
     if (local) return JSON.parse(local);
   } catch (e) {}
 
-  // 2. Fetch the map.json hosted on GitHub Pages
+  // 2. Fetch map.json from GitHub Pages repository
   try {
     const response = await fetch('./map.json?v=' + Date.now());
     if (response.ok) {
-      const data = await response.json();
-      return data;
+      return await response.json();
     }
   } catch (err) {
-    console.error("Failed to load map.json from server, using fallback:", err);
+    console.error("Failed to load map.json from server:", err);
   }
 
-  // 3. Emergency fallback if offline
+  // 3. Fallback structure if map.json cannot be reached
   return {
     cols: 60,
     rows: 40,
