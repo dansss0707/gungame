@@ -758,7 +758,7 @@
   <div id="interact-hint">Press [E]</div>
   <canvas id="gameCanvas"></canvas>
 
-  <!-- Scripts in strict dependency order -->
+  <!-- Modular Scripts in dependency order -->
   <script src="src/common.js"></script>
   <script src="src/camera.js"></script>
   <script src="src/physics.js"></script>
@@ -774,1111 +774,1088 @@
   <script src="src/map.js"></script>
 
   <script>
-    const canvas = document.getElementById('gameCanvas');
-    const ctx = canvas.getContext('2d');
-    const cfg = window.Game.CONFIG;
-    const mapData = window.Game.loadMapData();
-    window.Game.MapRenderer.initDoors(mapData);
+    async function initGame() {
+      const canvas = document.getElementById('gameCanvas');
+      const ctx = canvas.getContext('2d');
+      const cfg = window.Game.CONFIG;
 
-    const camera = new window.Game.Camera(window.innerWidth, window.innerHeight);
-    const minimap = new window.Game.Minimap('minimapCanvas');
+      // 1. Fetch official map.json from repository
+      const mapData = await window.Game.loadMapData();
+      window.Game.MapRenderer.initDoors(mapData);
 
-    // ==========================================
-    // RESURGENCE DEATH & RESPAWN STATE
-    // ==========================================
-    let isLocalDead = false;
-    let respawnCountdown = 0;
-    const deathOverlay = document.getElementById('death-overlay');
-    const lblRedeployTitle = document.getElementById('lbl-redeploy-title');
-    const lblRedeployTimer = document.getElementById('lbl-redeploy-timer');
-    const lblRedeployDetail = document.getElementById('lbl-redeploy-detail');
-    const btnForfeit = document.getElementById('btn-forfeit');
+      const camera = new window.Game.Camera(window.innerWidth, window.innerHeight);
+      const minimap = new window.Game.Minimap('minimapCanvas');
 
-    btnForfeit.onclick = () => {
-      location.reload();
-    };
+      // 2. Extract spawn points
+      const allSpawns = [];
+      ['floor1', 'floor2', 'roof'].forEach(flr => {
+        const level = mapData.levels[flr];
+        if (level && level.spawns) {
+          level.spawns.forEach(s => allSpawns.push({ x: s.x, y: s.y, floor: flr }));
+        }
+      });
 
-    // Drops all weapons, consumables, and cash when a player dies
-    function dropPlayerLoot(pX, pY, pFloor, inv, isLocal = true) {
-      const droppedItems = [];
+      let startX = 150, startY = 150, startFloor = 'floor1';
+      if (allSpawns.length > 0) {
+        const chosen = allSpawns[Math.floor(Math.random() * allSpawns.length)];
+        startX = chosen.x;
+        startY = chosen.y;
+        startFloor = chosen.floor;
+      }
 
-      // 1. Drop Inventory items
-      if (inv && inv.slots) {
-        inv.slots.forEach(slot => {
-          if (slot && slot.item) {
-            droppedItems.push({
-              type: slot.item.type,
-              name: slot.item.name,
-              color: slot.item.color,
-              count: slot.count || 1,
-              weaponData: slot.item.type === 'weapon' ? slot.item : undefined,
-              consumableData: slot.item.type === 'consumable' ? slot.item : undefined
+      const player = new window.Game.Player(startX, startY);
+      player.currentFloor = startFloor;
+      player.armorHp = 0;
+
+      const MATCH_DURATION = 360;
+      let matchTimeRemaining = MATCH_DURATION;
+
+      const bullets = [];
+      let groundItems = [];
+      const activeChests = [];
+      const activeKiosks = [];
+      const remotePlayers = {};
+      const damagePops = [];
+      let isMultiplayerActive = false;
+      let localPlayerName = 'Ghost';
+
+      // 3. Populate chests & kiosks from loaded map
+      ['floor1', 'floor2', 'roof'].forEach(flr => {
+        const level = mapData.levels[flr];
+        if (level) {
+          if (level.chests) {
+            level.chests.forEach((c, idx) => {
+              activeChests.push(new window.Game.Chest(c.x, c.y, flr, `${flr}_chest_${idx}`));
             });
           }
-        });
-        if (isLocal) {
-          inv.slots = [null, null, null, null, null];
-          inv.activeSlotIndex = 0;
+          if (level.kiosks) {
+            level.kiosks.forEach(k => activeKiosks.push(new window.Game.Kiosk(k.x, k.y, flr)));
+          }
         }
-      }
-
-      // 2. Drop 50% of cash
-      if (inv && inv.cash > 0) {
-        const dropCash = Math.floor(inv.cash * 0.5);
-        if (dropCash > 0) {
-          droppedItems.push({
-            type: 'cash',
-            name: 'Cash Roll',
-            value: dropCash,
-            color: '#4ade80'
-          });
-          if (isLocal) inv.cash -= dropCash;
-        }
-      }
-
-      // Spawn onto ground in world
-      const netDrops = [];
-      droppedItems.forEach((it, idx) => {
-        const angle = (idx / droppedItems.length) * Math.PI * 2 + (Math.random() * 0.4 - 0.2);
-        const dist = 28 + Math.random() * 20;
-        const dx = pX + Math.cos(angle) * dist;
-        const dy = pY + Math.sin(angle) * dist;
-
-        const groundItem = new window.Game.GroundItem(dx, dy, pFloor, it);
-        groundItems.push(groundItem);
-
-        netDrops.push({
-          id: groundItem.id,
-          x: dx,
-          y: dy,
-          floor: pFloor,
-          item: it
-        });
       });
 
-      // Broadcast dropped loot so other clients see it
-      if (isLocal && isMultiplayerActive && netDrops.length > 0) {
-        window.Game.Network.sendAction('spawn_dropped_loot', { drops: netDrops });
+      // ==========================================
+      // RESURGENCE DEATH & RESPAWN STATE
+      // ==========================================
+      let isLocalDead = false;
+      let respawnCountdown = 0;
+      const deathOverlay = document.getElementById('death-overlay');
+      const lblRedeployTitle = document.getElementById('lbl-redeploy-title');
+      const lblRedeployTimer = document.getElementById('lbl-redeploy-timer');
+      const lblRedeployDetail = document.getElementById('lbl-redeploy-detail');
+      const btnForfeit = document.getElementById('btn-forfeit');
+
+      btnForfeit.onclick = () => {
+        location.reload();
+      };
+
+      // Drops weapons, consumables, and 50% cash on death
+      function dropPlayerLoot(pX, pY, pFloor, inv, isLocal = true) {
+        const droppedItems = [];
+
+        if (inv && inv.slots) {
+          inv.slots.forEach(slot => {
+            if (slot && slot.item) {
+              droppedItems.push({
+                type: slot.item.type,
+                name: slot.item.name,
+                color: slot.item.color,
+                count: slot.count || 1,
+                weaponData: slot.item.type === 'weapon' ? slot.item : undefined,
+                consumableData: slot.item.type === 'consumable' ? slot.item : undefined
+              });
+            }
+          });
+          if (isLocal) {
+            inv.slots = [null, null, null, null, null];
+            inv.activeSlotIndex = 0;
+          }
+        }
+
+        if (inv && inv.cash > 0) {
+          const dropCash = Math.floor(inv.cash * 0.5);
+          if (dropCash > 0) {
+            droppedItems.push({
+              type: 'cash',
+              name: 'Cash Roll',
+              value: dropCash,
+              color: '#4ade80'
+            });
+            if (isLocal) inv.cash -= dropCash;
+          }
+        }
+
+        const netDrops = [];
+        droppedItems.forEach((it, idx) => {
+          const angle = (idx / (droppedItems.length || 1)) * Math.PI * 2 + (Math.random() * 0.4 - 0.2);
+          const dist = 28 + Math.random() * 20;
+          const dx = pX + Math.cos(angle) * dist;
+          const dy = pY + Math.sin(angle) * dist;
+
+          const groundItem = new window.Game.GroundItem(dx, dy, pFloor, it);
+          groundItems.push(groundItem);
+
+          netDrops.push({
+            id: groundItem.id,
+            x: dx,
+            y: dy,
+            floor: pFloor,
+            item: it
+          });
+        });
+
+        if (isLocal && isMultiplayerActive && netDrops.length > 0) {
+          window.Game.Network.sendAction('spawn_dropped_loot', { drops: netDrops });
+        }
       }
-    }
 
-    function triggerPlayerDeath() {
-      if (isLocalDead) return;
-      isLocalDead = true;
-      player.isDead = true;
+      function triggerPlayerDeath() {
+        if (isLocalDead) return;
+        isLocalDead = true;
+        player.isDead = true;
 
-      // Close kiosk shop if open
-      if (window.Game.UI && window.Game.UI.isShopOpen) {
-        window.Game.UI.closeShop();
-      }
+        if (window.Game.UI && window.Game.UI.isShopOpen) {
+          window.Game.UI.closeShop();
+        }
 
-      // DROP LOCAL INVENTORY ONTO GROUND
-      dropPlayerLoot(player.x, player.y, player.currentFloor, player.inventory, true);
+        dropPlayerLoot(player.x, player.y, player.currentFloor, player.inventory, true);
+        deathOverlay.style.display = 'flex';
 
-      deathOverlay.style.display = 'flex';
-
-      // Rule: Before 2 minutes left (matchTimeRemaining > 120)
-      if (matchTimeRemaining > 120) {
-        respawnCountdown = 10;
-        lblRedeployTitle.textContent = "RESURGENCE REDEPLOYING IN";
-        lblRedeployTimer.textContent = "10";
-        lblRedeployTimer.style.fontSize = "56px";
-        lblRedeployTimer.style.color = "#38bdf8";
-        lblRedeployDetail.textContent = "RESURGENCE WINDOW: ACTIVE (FREE)";
-        lblRedeployDetail.style.color = '#38bdf8';
-        btnForfeit.style.display = 'none';
-      } else {
-        // Under 2 minutes left: Must have Revive Token
-        if (player.inventory.respawnTokens > 0) {
-          player.inventory.respawnTokens -= 1;
-          window.Game.UI.addPickupFeed("Revive Token Consumed!", "#facc15");
+        if (matchTimeRemaining > 120) {
           respawnCountdown = 10;
-          lblRedeployTitle.textContent = "REVIVE TOKEN REDEPLOY IN";
+          lblRedeployTitle.textContent = "RESURGENCE REDEPLOYING IN";
           lblRedeployTimer.textContent = "10";
           lblRedeployTimer.style.fontSize = "56px";
-          lblRedeployTimer.style.color = "#facc15";
-          lblRedeployDetail.textContent = `TOKEN USED! (${player.inventory.respawnTokens} REMAINING)`;
-          lblRedeployDetail.style.color = '#facc15';
+          lblRedeployTimer.style.color = "#38bdf8";
+          lblRedeployDetail.textContent = "RESURGENCE WINDOW: ACTIVE (FREE)";
+          lblRedeployDetail.style.color = '#38bdf8';
           btnForfeit.style.display = 'none';
         } else {
-          // No tokens -> Permanently eliminated
-          respawnCountdown = -1;
-          lblRedeployTitle.textContent = "RESURGENCE CLOSED - ELIMINATED";
-          lblRedeployTimer.textContent = "DEFEAT";
-          lblRedeployTimer.style.fontSize = "36px";
-          lblRedeployTimer.style.color = "#ef4444";
-          lblRedeployDetail.textContent = "NO REVIVE TOKENS REMAINING";
-          lblRedeployDetail.style.color = "#ef4444";
-          btnForfeit.style.display = 'block';
+          if (player.inventory.respawnTokens > 0) {
+            player.inventory.respawnTokens -= 1;
+            window.Game.UI.addPickupFeed("Revive Token Consumed!", "#facc15");
+            respawnCountdown = 10;
+            lblRedeployTitle.textContent = "REVIVE TOKEN REDEPLOY IN";
+            lblRedeployTimer.textContent = "10";
+            lblRedeployTimer.style.fontSize = "56px";
+            lblRedeployTimer.style.color = "#facc15";
+            lblRedeployDetail.textContent = `TOKEN USED! (${player.inventory.respawnTokens} REMAINING)`;
+            lblRedeployDetail.style.color = '#facc15';
+            btnForfeit.style.display = 'none';
+          } else {
+            respawnCountdown = -1;
+            lblRedeployTitle.textContent = "RESURGENCE CLOSED - ELIMINATED";
+            lblRedeployTimer.textContent = "DEFEAT";
+            lblRedeployTimer.style.fontSize = "36px";
+            lblRedeployTimer.style.color = "#ef4444";
+            lblRedeployDetail.textContent = "NO REVIVE TOKENS REMAINING";
+            lblRedeployDetail.style.color = "#ef4444";
+            btnForfeit.style.display = 'block';
+          }
         }
       }
-    }
 
-    function executeRedeploy() {
-      isLocalDead = false;
-      player.isDead = false;
-      player.hp = 100;
-      player.armorHp = 50;
+      function executeRedeploy() {
+        isLocalDead = false;
+        player.isDead = false;
+        player.hp = 100;
+        player.armorHp = 50;
 
-      // Drop from a random safe beacon
-      if (allSpawns.length > 0) {
-        const sp = allSpawns[Math.floor(Math.random() * allSpawns.length)];
-        player.x = sp.x;
-        player.y = sp.y;
-        player.currentFloor = sp.floor;
+        if (allSpawns.length > 0) {
+          const sp = allSpawns[Math.floor(Math.random() * allSpawns.length)];
+          player.x = sp.x;
+          player.y = sp.y;
+          player.currentFloor = sp.floor;
+        }
+
+        deathOverlay.style.display = 'none';
+        window.Game.UI.addPickupFeed("Redeployed to Arena!", "#22c55e");
+
+        if (isMultiplayerActive) {
+          window.Game.Network.sendAction('player_revived', {
+            id: window.Game.Network.myId || 'local_player',
+            x: player.x,
+            y: player.y,
+            floor: player.currentFloor
+          });
+        }
       }
 
-      deathOverlay.style.display = 'none';
-      window.Game.UI.addPickupFeed("Redeployed to Arena!", "#22c55e");
+      function toggleDoorById(doorId, forceState = null) {
+        for (const flr of ['floor1', 'floor2', 'roof']) {
+          const level = mapData.levels[flr];
+          if (level && level.doors) {
+            const d = level.doors.find(item => item.id === doorId);
+            if (d) {
+              d.isOpen = forceState !== null ? forceState : !d.isOpen;
+              return d.isOpen;
+            }
+          }
+        }
+        return false;
+      }
 
-      if (isMultiplayerActive) {
-        window.Game.Network.sendAction('player_revived', {
-          id: window.Game.Network.myId || 'local_player',
-          x: player.x,
-          y: player.y,
-          floor: player.currentFloor
+      function removeGroundItemById(itemId) {
+        const idx = groundItems.findIndex(i => i.id === itemId);
+        if (idx !== -1) groundItems.splice(idx, 1);
+      }
+
+      function spawnDamagePop(x, y, damage, isShield) {
+        damagePops.push({
+          x: x + (Math.random() * 12 - 6),
+          y: y - 10,
+          text: Math.round(damage).toString(),
+          color: isShield ? '#38bdf8' : '#ef4444',
+          alpha: 1.0,
+          vy: -40
         });
       }
-    }
 
-    // Collect spawns
-    const allSpawns = [];
-    ['floor1', 'floor2', 'roof'].forEach(flr => {
-      const level = mapData.levels[flr];
-      if (level && level.spawns) {
-        level.spawns.forEach(s => allSpawns.push({ x: s.x, y: s.y, floor: flr }));
-      }
-    });
-
-    let startX = 150, startY = 150, startFloor = 'floor1';
-    if (allSpawns.length > 0) {
-      const chosen = allSpawns[Math.floor(Math.random() * allSpawns.length)];
-      startX = chosen.x;
-      startY = chosen.y;
-      startFloor = chosen.floor;
-    }
-
-    const player = new window.Game.Player(startX, startY);
-    player.currentFloor = startFloor;
-    player.armorHp = 0;
-
-    const MATCH_DURATION = 360;
-    let matchTimeRemaining = MATCH_DURATION;
-
-    const bullets = [];
-    let groundItems = [];
-    const activeChests = [];
-    const activeKiosks = [];
-    const remotePlayers = {};
-    const damagePops = [];
-    let isMultiplayerActive = false;
-    let localPlayerName = 'Ghost';
-
-    ['floor1', 'floor2', 'roof'].forEach(flr => {
-      const level = mapData.levels[flr];
-      if (level) {
-        if (level.chests) {
-          level.chests.forEach((c, idx) => {
-            activeChests.push(new window.Game.Chest(c.x, c.y, flr, `${flr}_chest_${idx}`));
-          });
+      // ==========================================
+      // NETWORK ACTION RECEIVER
+      // ==========================================
+      window.Game.Network.onActionReceive = (sender, action, payload) => {
+        if (action === 'shoot') {
+          bullets.push(new window.Game.Bullet(
+            payload.x, payload.y, payload.angle, payload.floor, payload.damage, payload.speed, payload.shooterId, payload.id
+          ));
+        } 
+        else if (action === 'match_start') {
+          if (window.Game.Network.onMatchStart) window.Game.Network.onMatchStart(payload);
         }
-        if (level.kiosks) {
-          level.kiosks.forEach(k => activeKiosks.push(new window.Game.Kiosk(k.x, k.y, flr)));
-        }
-      }
-    });
-
-    function toggleDoorById(doorId, forceState = null) {
-      for (const flr of ['floor1', 'floor2', 'roof']) {
-        const level = mapData.levels[flr];
-        if (level && level.doors) {
-          const d = level.doors.find(item => item.id === doorId);
-          if (d) {
-            d.isOpen = forceState !== null ? forceState : !d.isOpen;
-            return d.isOpen;
+        else if (action === 'door_toggle') {
+          toggleDoorById(payload.doorId, payload.isOpen);
+          if (window.Game.Network.isHost) {
+            window.Game.Network.sendAction('door_toggle', payload);
           }
         }
-      }
-      return false;
-    }
-
-    function removeGroundItemById(itemId) {
-      const idx = groundItems.findIndex(i => i.id === itemId);
-      if (idx !== -1) groundItems.splice(idx, 1);
-    }
-
-    function spawnDamagePop(x, y, damage, isShield) {
-      damagePops.push({
-        x: x + (Math.random() * 12 - 6),
-        y: y - 10,
-        text: Math.round(damage).toString(),
-        color: isShield ? '#38bdf8' : '#ef4444',
-        alpha: 1.0,
-        vy: -40
-      });
-    }
-
-    // ==========================================
-    // NETWORK ACTION RECEIVER
-    // ==========================================
-    window.Game.Network.onActionReceive = (sender, action, payload) => {
-      if (action === 'shoot') {
-        bullets.push(new window.Game.Bullet(
-          payload.x, payload.y, payload.angle, payload.floor, payload.damage, payload.speed, payload.shooterId, payload.id
-        ));
-      } 
-      else if (action === 'match_start') {
-        if (window.Game.Network.onMatchStart) window.Game.Network.onMatchStart(payload);
-      }
-      else if (action === 'door_toggle') {
-        toggleDoorById(payload.doorId, payload.isOpen);
-        if (window.Game.Network.isHost) {
-          window.Game.Network.sendAction('door_toggle', payload);
+        else if (action === 'request_open_chest') {
+          if (window.Game.Network.isHost) {
+            const chest = activeChests.find(c => c.id === payload.chestId);
+            if (chest && !chest.isOpen) {
+              const rawDrops = chest.generateLootDrops();
+              const drops = rawDrops.map(d => ({
+                ...d,
+                id: `loot_${Date.now()}_${Math.floor(Math.random() * 10000)}`
+              }));
+              chest.openWithItems(drops, item => groundItems.push(item), mapData);
+              window.Game.Network.sendAction('chest_opened', { chestId: chest.id, drops });
+            }
+          }
         }
-      }
-      else if (action === 'request_open_chest') {
-        if (window.Game.Network.isHost) {
+        else if (action === 'chest_opened') {
           const chest = activeChests.find(c => c.id === payload.chestId);
           if (chest && !chest.isOpen) {
-            const rawDrops = chest.generateLootDrops();
-            const drops = rawDrops.map(d => ({
-              ...d,
-              id: `loot_${Date.now()}_${Math.floor(Math.random() * 10000)}`
-            }));
-            chest.openWithItems(drops, item => groundItems.push(item), mapData);
-            window.Game.Network.sendAction('chest_opened', { chestId: chest.id, drops });
+            chest.openWithItems(payload.drops, item => groundItems.push(item), mapData);
           }
         }
-      }
-      else if (action === 'chest_opened') {
-        const chest = activeChests.find(c => c.id === payload.chestId);
-        if (chest && !chest.isOpen) {
-          chest.openWithItems(payload.drops, item => groundItems.push(item), mapData);
+        else if (action === 'item_pickup_request') {
+          if (window.Game.Network.isHost) {
+            removeGroundItemById(payload.itemId);
+            window.Game.Network.sendAction('item_despawn', { itemId: payload.itemId });
+          }
         }
-      }
-      else if (action === 'item_pickup_request') {
-        if (window.Game.Network.isHost) {
+        else if (action === 'item_despawn') {
           removeGroundItemById(payload.itemId);
-          window.Game.Network.sendAction('item_despawn', { itemId: payload.itemId });
         }
-      }
-      else if (action === 'item_despawn') {
-        removeGroundItemById(payload.itemId);
-      }
-      else if (action === 'spawn_dropped_loot') {
-        // Another player died and their inventory dropped
-        if (payload && payload.drops) {
-          payload.drops.forEach(d => {
-            if (!groundItems.some(existing => existing.id === d.id)) {
-              groundItems.push(new window.Game.GroundItem(d.x, d.y, d.floor, d.item, d.id));
+        else if (action === 'spawn_dropped_loot') {
+          if (payload && payload.drops) {
+            payload.drops.forEach(d => {
+              if (!groundItems.some(existing => existing.id === d.id)) {
+                groundItems.push(new window.Game.GroundItem(d.x, d.y, d.floor, d.item, d.id));
+              }
+            });
+          }
+        }
+        else if (action === 'player_damaged') {
+          spawnDamagePop(payload.x, payload.y, payload.amount, payload.isShield);
+
+          const myId = window.Game.Network.myId || 'local_player';
+
+          if (payload.targetId === myId) {
+            player.takeDamage(payload.amount);
+            if (player.isDead) {
+              window.Game.UI.addPickupFeed(`Eliminated by ${payload.attackerName || 'Enemy'}!`, '#ef4444');
+              triggerPlayerDeath();
             }
-          });
-        }
-      }
-      else if (action === 'player_damaged') {
-        spawnDamagePop(payload.x, payload.y, payload.amount, payload.isShield);
-
-        const myId = window.Game.Network.myId || 'local_player';
-
-        if (payload.targetId === myId) {
-          player.takeDamage(payload.amount);
-          if (player.isDead) {
-            window.Game.UI.addPickupFeed(`Eliminated by ${payload.attackerName || 'Enemy'}!`, '#ef4444');
-            triggerPlayerDeath();
-          }
-        } else if (remotePlayers[payload.targetId]) {
-          const rp = remotePlayers[payload.targetId];
-          rp.takeDamage(payload.amount);
-          if (rp.isDead) {
-            window.Game.UI.addPickupFeed(`${rp.name} was eliminated!`, '#facc15');
-          }
-        }
-      }
-      else if (action === 'player_revived') {
-        if (remotePlayers[payload.id]) {
-          const rp = remotePlayers[payload.id];
-          rp.isDead = false;
-          rp.hp = 100;
-          rp.armorHp = 50;
-          rp.x = payload.x;
-          rp.y = payload.y;
-          rp.currentFloor = payload.floor;
-          window.Game.UI.addPickupFeed(`${rp.name} redeployed!`, '#38bdf8');
-        }
-      }
-    };
-
-    window.Game.Network.onStateUpdate = (sender, data) => {
-      if (window.Game.Network.isHost) {
-        if (remotePlayers[sender]) remotePlayers[sender].applySnapshot(data);
-      } else {
-        if (data.players) {
-          for (const id in data.players) {
-            if (id === window.Game.Network.myId) continue;
-            if (!remotePlayers[id]) {
-              remotePlayers[id] = new window.Game.RemotePlayer(id, data.players[id].name);
+          } else if (remotePlayers[payload.targetId]) {
+            const rp = remotePlayers[payload.targetId];
+            rp.takeDamage(payload.amount);
+            if (rp.isDead) {
+              window.Game.UI.addPickupFeed(`${rp.name} was eliminated!`, '#facc15');
             }
-            remotePlayers[id].applySnapshot(data.players[id]);
           }
         }
-        if (data.doors) {
-          for (const [doorId, isOpen] of Object.entries(data.doors)) {
-            toggleDoorById(doorId, isOpen);
+        else if (action === 'player_revived') {
+          if (remotePlayers[payload.id]) {
+            const rp = remotePlayers[payload.id];
+            rp.isDead = false;
+            rp.hp = 100;
+            rp.armorHp = 50;
+            rp.x = payload.x;
+            rp.y = payload.y;
+            rp.currentFloor = payload.floor;
+            window.Game.UI.addPickupFeed(`${rp.name} redeployed!`, '#38bdf8');
           }
         }
-        if (data.openedChests) {
-          data.openedChests.forEach(cid => {
-            const ch = activeChests.find(c => c.id === cid);
-            if (ch) ch.isOpen = true;
-          });
+      };
+
+      window.Game.Network.onStateUpdate = (sender, data) => {
+        if (window.Game.Network.isHost) {
+          if (remotePlayers[sender]) remotePlayers[sender].applySnapshot(data);
+        } else {
+          if (data.players) {
+            for (const id in data.players) {
+              if (id === window.Game.Network.myId) continue;
+              if (!remotePlayers[id]) {
+                remotePlayers[id] = new window.Game.RemotePlayer(id, data.players[id].name);
+              }
+              remotePlayers[id].applySnapshot(data.players[id]);
+            }
+          }
+          if (data.doors) {
+            for (const [doorId, isOpen] of Object.entries(data.doors)) {
+              toggleDoorById(doorId, isOpen);
+            }
+          }
+          if (data.openedChests) {
+            data.openedChests.forEach(cid => {
+              const ch = activeChests.find(c => c.id === cid);
+              if (ch) ch.isOpen = true;
+            });
+          }
         }
-      }
-    };
+      };
 
-    // ==========================================
-    // MENU & SPAWN ALLOCATION
-    // ==========================================
-    const menuOverlay = document.getElementById('menu-overlay');
-    const screenMain = document.getElementById('screen-main');
-    const screenLobby = document.getElementById('screen-lobby');
-    const inpName = document.getElementById('inp-player-name');
-    const inpCode = document.getElementById('inp-room-code');
-    const lblCode = document.getElementById('lbl-lobby-code');
-    const playerListEl = document.getElementById('lobby-player-list');
-    const playerCountEl = document.getElementById('lbl-player-count');
-    const btnStartGame = document.getElementById('btn-start-game');
+      // ==========================================
+      // MENU & SPAWN ALLOCATION
+      // ==========================================
+      const menuOverlay = document.getElementById('menu-overlay');
+      const screenMain = document.getElementById('screen-main');
+      const screenLobby = document.getElementById('screen-lobby');
+      const inpName = document.getElementById('inp-player-name');
+      const inpCode = document.getElementById('inp-room-code');
+      const lblCode = document.getElementById('lbl-lobby-code');
+      const playerListEl = document.getElementById('lobby-player-list');
+      const playerCountEl = document.getElementById('lbl-player-count');
+      const btnStartGame = document.getElementById('btn-start-game');
 
-    function updateLobbyUI() {
-      playerListEl.innerHTML = '';
-      const all = [{ name: localPlayerName + ' (You)', isHost: window.Game.Network.isHost }];
-      for (const id in remotePlayers) {
-        all.push({ name: remotePlayers[id].name, isHost: false });
-      }
-      playerCountEl.textContent = all.length;
-      all.forEach(p => {
-        const row = document.createElement('div');
-        row.className = 'lobby-player-row';
-        row.innerHTML = `<span>${p.name}</span><span style="color:#38bdf8; font-size:10px;">${p.isHost ? 'HOST' : 'READY'}</span>`;
-        playerListEl.appendChild(row);
-      });
-    }
-
-    function assignSpawns(playerIds) {
-      const spawnCounts = {};
-      allSpawns.forEach((_, idx) => (spawnCounts[idx] = 0));
-      const assignments = {};
-
-      playerIds.forEach(id => {
-        if (allSpawns.length === 0) {
-          assignments[id] = { x: 150, y: 150, floor: 'floor1' };
-          return;
+      function updateLobbyUI() {
+        playerListEl.innerHTML = '';
+        const all = [{ name: localPlayerName + ' (You)', isHost: window.Game.Network.isHost }];
+        for (const id in remotePlayers) {
+          all.push({ name: remotePlayers[id].name, isHost: false });
         }
-
-        let available = allSpawns.map((_, idx) => idx).filter(idx => spawnCounts[idx] < 2);
-        if (available.length === 0) available = allSpawns.map((_, idx) => idx);
-
-        const chosenIdx = available[Math.floor(Math.random() * available.length)];
-        spawnCounts[chosenIdx]++;
-
-        const sp = allSpawns[chosenIdx];
-        const offset = spawnCounts[chosenIdx] === 2 ? 26 : 0;
-        assignments[id] = { x: sp.x + offset, y: sp.y + offset, floor: sp.floor };
-      });
-      return assignments;
-    }
-
-    document.getElementById('btn-host-match').onclick = () => {
-      localPlayerName = inpName.value.trim() || 'Host';
-      screenMain.style.display = 'none';
-      screenLobby.style.display = 'flex';
-      btnStartGame.style.display = 'block';
-
-      window.Game.Network.initHost(localPlayerName, (code) => {
-        lblCode.textContent = code;
-        isMultiplayerActive = true;
-        updateLobbyUI();
-      });
-    };
-
-    document.getElementById('btn-join-match').onclick = () => {
-      const code = inpCode.value.trim();
-      if (!code) return;
-      localPlayerName = inpName.value.trim() || 'Guest';
-
-      screenMain.style.display = 'none';
-      screenLobby.style.display = 'flex';
-      lblCode.textContent = code.toUpperCase();
-      btnStartGame.style.display = 'none';
-
-      window.Game.Network.initClient(localPlayerName, code, () => {
-        isMultiplayerActive = true;
-        updateLobbyUI();
-      }, (err) => {
-        alert("Failed to join room: " + err.message);
-        screenLobby.style.display = 'none';
-        screenMain.style.display = 'flex';
-      });
-    };
-
-    document.getElementById('btn-play-solo').onclick = () => {
-      menuOverlay.style.display = 'none';
-    };
-
-    btnStartGame.onclick = () => {
-      const allIds = [window.Game.Network.myId, ...Object.keys(remotePlayers)];
-      const spawnMap = assignSpawns(allIds);
-
-      const mySpawn = spawnMap[window.Game.Network.myId];
-      if (mySpawn) {
-        player.x = mySpawn.x;
-        player.y = mySpawn.y;
-        player.currentFloor = mySpawn.floor;
+        playerCountEl.textContent = all.length;
+        all.forEach(p => {
+          const row = document.createElement('div');
+          row.className = 'lobby-player-row';
+          row.innerHTML = `<span>${p.name}</span><span style="color:#38bdf8; font-size:10px;">${p.isHost ? 'HOST' : 'READY'}</span>`;
+          playerListEl.appendChild(row);
+        });
       }
 
-      window.Game.Network.sendAction('match_start', {
-        time: MATCH_DURATION,
-        spawns: spawnMap
-      });
+      function assignSpawns(playerIds) {
+        const spawnCounts = {};
+        allSpawns.forEach((_, idx) => (spawnCounts[idx] = 0));
+        const assignments = {};
 
-      menuOverlay.style.display = 'none';
-      window.Game.UI.addPickupFeed("Match Deployed!", "#22c55e");
-    };
+        playerIds.forEach(id => {
+          if (allSpawns.length === 0) {
+            assignments[id] = { x: 150, y: 150, floor: 'floor1' };
+            return;
+          }
 
-    window.Game.Network.onPlayerJoin = (peerId, name) => {
-      remotePlayers[peerId] = new window.Game.RemotePlayer(peerId, name);
-      window.Game.UI.addPickupFeed(`${name} connected!`, '#38bdf8');
-      updateLobbyUI();
-    };
+          let available = allSpawns.map((_, idx) => idx).filter(idx => spawnCounts[idx] < 2);
+          if (available.length === 0) available = allSpawns.map((_, idx) => idx);
 
-    window.Game.Network.onPlayerLeave = (peerId) => {
-      if (remotePlayers[peerId]) {
-        window.Game.UI.addPickupFeed(`${remotePlayers[peerId].name} disconnected`, '#ef4444');
-        delete remotePlayers[peerId];
-        updateLobbyUI();
+          const chosenIdx = available[Math.floor(Math.random() * available.length)];
+          spawnCounts[chosenIdx]++;
+
+          const sp = allSpawns[chosenIdx];
+          const offset = spawnCounts[chosenIdx] === 2 ? 26 : 0;
+          assignments[id] = { x: sp.x + offset, y: sp.y + offset, floor: sp.floor };
+        });
+        return assignments;
       }
-    };
 
-    window.Game.Network.onMatchStart = (payload) => {
-      menuOverlay.style.display = 'none';
-      if (payload && payload.spawns && window.Game.Network.myId) {
-        const mySpawn = payload.spawns[window.Game.Network.myId];
+      document.getElementById('btn-host-match').onclick = () => {
+        localPlayerName = inpName.value.trim() || 'Host';
+        screenMain.style.display = 'none';
+        screenLobby.style.display = 'flex';
+        btnStartGame.style.display = 'block';
+
+        window.Game.Network.initHost(localPlayerName, (code) => {
+          lblCode.textContent = code;
+          isMultiplayerActive = true;
+          updateLobbyUI();
+        });
+      };
+
+      document.getElementById('btn-join-match').onclick = () => {
+        const code = inpCode.value.trim();
+        if (!code) return;
+        localPlayerName = inpName.value.trim() || 'Guest';
+
+        screenMain.style.display = 'none';
+        screenLobby.style.display = 'flex';
+        lblCode.textContent = code.toUpperCase();
+        btnStartGame.style.display = 'none';
+
+        window.Game.Network.initClient(localPlayerName, code, () => {
+          isMultiplayerActive = true;
+          updateLobbyUI();
+        }, (err) => {
+          alert("Failed to join room: " + err.message);
+          screenLobby.style.display = 'none';
+          screenMain.style.display = 'flex';
+        });
+      };
+
+      document.getElementById('btn-play-solo').onclick = () => {
+        menuOverlay.style.display = 'none';
+      };
+
+      btnStartGame.onclick = () => {
+        const allIds = [window.Game.Network.myId, ...Object.keys(remotePlayers)];
+        const spawnMap = assignSpawns(allIds);
+
+        const mySpawn = spawnMap[window.Game.Network.myId];
         if (mySpawn) {
           player.x = mySpawn.x;
           player.y = mySpawn.y;
           player.currentFloor = mySpawn.floor;
         }
-      }
-      window.Game.UI.addPickupFeed("Match Deployed!", "#22c55e");
-    };
 
-    function handlePurchase(itemId, cost) {
-      if (player.inventory.cash < cost) {
-        window.Game.UI.addPickupFeed("Not enough cash!", "#ef4444");
-        return;
-      }
+        window.Game.Network.sendAction('match_start', {
+          time: MATCH_DURATION,
+          spawns: spawnMap
+        });
 
-      player.inventory.cash -= cost;
+        menuOverlay.style.display = 'none';
+        window.Game.UI.addPickupFeed("Match Deployed!", "#22c55e");
+      };
 
-      if (itemId === 'AMMO') {
-        const active = player.inventory.getActiveSlot();
-        if (active && active.item && active.item.type === 'weapon') {
-          active.reserveAmmo += 90;
-        } else {
-          const wepSlot = player.inventory.slots.find(s => s && s.item && s.item.type === 'weapon');
-          if (wepSlot) wepSlot.reserveAmmo += 90;
+      window.Game.Network.onPlayerJoin = (peerId, name) => {
+        remotePlayers[peerId] = new window.Game.RemotePlayer(peerId, name);
+        window.Game.UI.addPickupFeed(`${name} connected!`, '#38bdf8');
+        updateLobbyUI();
+      };
+
+      window.Game.Network.onPlayerLeave = (peerId) => {
+        if (remotePlayers[peerId]) {
+          window.Game.UI.addPickupFeed(`${remotePlayers[peerId].name} disconnected`, '#ef4444');
+          delete remotePlayers[peerId];
+          updateLobbyUI();
         }
-        window.Game.UI.addPickupFeed("Purchased +90 Ammo", "#fbbf24");
-      } else if (itemId === 'TOKEN') {
-        player.inventory.respawnTokens += 1;
-        window.Game.UI.addPickupFeed("Purchased Revive Token!", "#facc15");
-      } else {
-        let newItemData = null;
-        if (itemId === 'MINI_SHIELD') newItemData = { ...window.Game.CONSUMABLE_TYPES.MINI_SHIELD, count: 2 };
-        else if (itemId === 'BIG_SHIELD') newItemData = { ...window.Game.CONSUMABLE_TYPES.BIG_SHIELD, count: 1 };
-        else if (itemId === 'MEDKIT') newItemData = { ...window.Game.CONSUMABLE_TYPES.MEDKIT, count: 1 };
-        else if (itemId === 'SNIPER') newItemData = { ...window.Game.WEAPON_TYPES.SNIPER };
-        else if (itemId === 'SMG') newItemData = { ...window.Game.WEAPON_TYPES.SMG };
+      };
 
-        if (newItemData) {
-          const inv = player.inventory;
-          if (newItemData.type === 'consumable') {
-            const existing = inv.slots.find(s => s && s.item && s.item.name === newItemData.name);
-            if (existing) {
-              existing.count += (newItemData.count || 1);
-              window.Game.UI.addPickupFeed(`Purchased ${newItemData.name} (+${newItemData.count || 1})`, newItemData.color);
-              return;
-            }
+      window.Game.Network.onMatchStart = (payload) => {
+        menuOverlay.style.display = 'none';
+        if (payload && payload.spawns && window.Game.Network.myId) {
+          const mySpawn = payload.spawns[window.Game.Network.myId];
+          if (mySpawn) {
+            player.x = mySpawn.x;
+            player.y = mySpawn.y;
+            player.currentFloor = mySpawn.floor;
           }
+        }
+        window.Game.UI.addPickupFeed("Match Deployed!", "#22c55e");
+      };
 
-          const emptySlotIdx = inv.getFirstEmptySlotIndex();
-          if (emptySlotIdx !== -1) {
-            inv.slots[emptySlotIdx] = {
-              item: newItemData,
-              currentMag: newItemData.type === 'weapon' ? newItemData.magSize : undefined,
-              reserveAmmo: newItemData.type === 'weapon' ? 60 : undefined,
-              count: newItemData.count || 1
-            };
-            window.Game.UI.addPickupFeed(`Purchased ${newItemData.name}`, newItemData.color);
+      function handlePurchase(itemId, cost) {
+        if (player.inventory.cash < cost) {
+          window.Game.UI.addPickupFeed("Not enough cash!", "#ef4444");
+          return;
+        }
+
+        player.inventory.cash -= cost;
+
+        if (itemId === 'AMMO') {
+          const active = player.inventory.getActiveSlot();
+          if (active && active.item && active.item.type === 'weapon') {
+            active.reserveAmmo += 90;
           } else {
-            groundItems.push(new window.Game.GroundItem(player.x + 20, player.y, player.currentFloor, {
-              type: newItemData.type,
-              name: newItemData.name,
-              color: newItemData.color,
-              count: newItemData.count || 1,
-              weaponData: newItemData.type === 'weapon' ? newItemData : undefined,
-              consumableData: newItemData.type === 'consumable' ? newItemData : undefined
-            }));
-            window.Game.UI.addPickupFeed(`Inventory full! Dropped ${newItemData.name}`, newItemData.color);
+            const wepSlot = player.inventory.slots.find(s => s && s.item && s.item.type === 'weapon');
+            if (wepSlot) wepSlot.reserveAmmo += 90;
+          }
+          window.Game.UI.addPickupFeed("Purchased +90 Ammo", "#fbbf24");
+        } else if (itemId === 'TOKEN') {
+          player.inventory.respawnTokens += 1;
+          window.Game.UI.addPickupFeed("Purchased Revive Token!", "#facc15");
+        } else {
+          let newItemData = null;
+          if (itemId === 'MINI_SHIELD') newItemData = { ...window.Game.CONSUMABLE_TYPES.MINI_SHIELD, count: 2 };
+          else if (itemId === 'BIG_SHIELD') newItemData = { ...window.Game.CONSUMABLE_TYPES.BIG_SHIELD, count: 1 };
+          else if (itemId === 'MEDKIT') newItemData = { ...window.Game.CONSUMABLE_TYPES.MEDKIT, count: 1 };
+          else if (itemId === 'SNIPER') newItemData = { ...window.Game.WEAPON_TYPES.SNIPER };
+          else if (itemId === 'SMG') newItemData = { ...window.Game.WEAPON_TYPES.SMG };
+
+          if (newItemData) {
+            const inv = player.inventory;
+            if (newItemData.type === 'consumable') {
+              const existing = inv.slots.find(s => s && s.item && s.item.name === newItemData.name);
+              if (existing) {
+                existing.count += (newItemData.count || 1);
+                window.Game.UI.addPickupFeed(`Purchased ${newItemData.name} (+${newItemData.count || 1})`, newItemData.color);
+                return;
+              }
+            }
+
+            const emptySlotIdx = inv.getFirstEmptySlotIndex();
+            if (emptySlotIdx !== -1) {
+              inv.slots[emptySlotIdx] = {
+                item: newItemData,
+                currentMag: newItemData.type === 'weapon' ? newItemData.magSize : undefined,
+                reserveAmmo: newItemData.type === 'weapon' ? 60 : undefined,
+                count: newItemData.count || 1
+              };
+              window.Game.UI.addPickupFeed(`Purchased ${newItemData.name}`, newItemData.color);
+            } else {
+              groundItems.push(new window.Game.GroundItem(player.x + 20, player.y, player.currentFloor, {
+                type: newItemData.type,
+                name: newItemData.name,
+                color: newItemData.color,
+                count: newItemData.count || 1,
+                weaponData: newItemData.type === 'weapon' ? newItemData : undefined,
+                consumableData: newItemData.type === 'consumable' ? newItemData : undefined
+              }));
+              window.Game.UI.addPickupFeed(`Inventory full! Dropped ${newItemData.name}`, newItemData.color);
+            }
           }
         }
       }
-    }
 
-    window.Game.UI.init(player, handlePurchase);
+      window.Game.UI.init(player, handlePurchase);
 
-    const keys = {};
-    const mouseScreen = { x: 0, y: 0 };
-    let hoveredGroundItem = null;
+      const keys = {};
+      const mouseScreen = { x: 0, y: 0 };
+      let hoveredGroundItem = null;
 
-    function resize() {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-      camera.resize(canvas.width, canvas.height);
-    }
-    window.addEventListener('resize', resize);
-    resize();
-
-    window.addEventListener('contextmenu', e => e.preventDefault());
-
-    // ==========================================
-    // INTERACTION INPUTS (KEY E & KEY F)
-    // ==========================================
-    window.addEventListener('keydown', e => {
-      if (isLocalDead) return;
-
-      if (e.code === 'Escape' && window.Game.UI.isShopOpen) {
-        window.Game.UI.closeShop();
-        return;
+      function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        camera.resize(canvas.width, canvas.height);
       }
+      window.addEventListener('resize', resize);
+      resize();
 
-      if (window.Game.UI.isShopOpen) return;
+      window.addEventListener('contextmenu', e => e.preventDefault());
 
-      keys[e.code] = true;
-      keys[e.key] = true;
+      window.addEventListener('keydown', e => {
+        if (isLocalDead) return;
 
-      if (e.code.startsWith('Digit')) {
-        const slotNum = parseInt(e.code.replace('Digit', ''));
-        if (slotNum >= 1 && slotNum <= 5) player.inventory.switchSlot(slotNum - 1);
-      }
+        if (e.code === 'Escape' && window.Game.UI.isShopOpen) {
+          window.Game.UI.closeShop();
+          return;
+        }
 
-      if (e.code === 'KeyR') player.inventory.startReload();
+        if (window.Game.UI.isShopOpen) return;
 
-      if (e.code === 'KeyF') {
-        if (hoveredGroundItem) {
-          const itemData = hoveredGroundItem.item;
-          const itemId = hoveredGroundItem.id;
-          const inv = player.inventory;
-          const activeIdx = inv.activeSlotIndex;
-          const currentSlot = inv.slots[activeIdx];
+        keys[e.code] = true;
+        keys[e.key] = true;
 
-          if (isMultiplayerActive) {
-            window.Game.Network.sendAction(window.Game.Network.isHost ? 'item_despawn' : 'item_pickup_request', { itemId });
-          }
-          removeGroundItemById(itemId);
-          hoveredGroundItem = null;
+        if (e.code.startsWith('Digit')) {
+          const slotNum = parseInt(e.code.replace('Digit', ''));
+          if (slotNum >= 1 && slotNum <= 5) player.inventory.switchSlot(slotNum - 1);
+        }
 
-          if (itemData.type === 'consumable') {
-            const existingStack = inv.slots.find(s => s && s.item && s.item.name === itemData.name);
-            if (existingStack) {
-              existingStack.count += (itemData.count || 1);
-              window.Game.UI.addPickupFeed(`Added +${itemData.count || 1} ${itemData.name}`, itemData.color);
+        if (e.code === 'KeyR') player.inventory.startReload();
+
+        if (e.code === 'KeyF') {
+          if (hoveredGroundItem) {
+            const itemData = hoveredGroundItem.item;
+            const itemId = hoveredGroundItem.id;
+            const inv = player.inventory;
+            const activeIdx = inv.activeSlotIndex;
+            const currentSlot = inv.slots[activeIdx];
+
+            if (isMultiplayerActive) {
+              window.Game.Network.sendAction(window.Game.Network.isHost ? 'item_despawn' : 'item_pickup_request', { itemId });
+            }
+            removeGroundItemById(itemId);
+            hoveredGroundItem = null;
+
+            if (itemData.type === 'consumable') {
+              const existingStack = inv.slots.find(s => s && s.item && s.item.name === itemData.name);
+              if (existingStack) {
+                existingStack.count += (itemData.count || 1);
+                window.Game.UI.addPickupFeed(`Added +${itemData.count || 1} ${itemData.name}`, itemData.color);
+                return;
+              }
+            }
+
+            if (!currentSlot) {
+              inv.slots[activeIdx] = {
+                item: itemData.weaponData || itemData.consumableData,
+                currentMag: itemData.weaponData ? itemData.weaponData.magSize : undefined,
+                reserveAmmo: itemData.weaponData ? 60 : undefined,
+                count: itemData.count || 1
+              };
+              window.Game.UI.addPickupFeed(`Picked up ${itemData.name}`, itemData.color);
               return;
             }
-          }
 
-          if (!currentSlot) {
+            const emptySlotIdx = inv.getFirstEmptySlotIndex();
+            if (emptySlotIdx !== -1) {
+              inv.slots[emptySlotIdx] = {
+                item: itemData.weaponData || itemData.consumableData,
+                currentMag: itemData.weaponData ? itemData.weaponData.magSize : undefined,
+                reserveAmmo: itemData.weaponData ? 60 : undefined,
+                count: itemData.count || 1
+              };
+              window.Game.UI.addPickupFeed(`Picked up ${itemData.name}`, itemData.color);
+              return;
+            }
+
+            const oldSlot = { ...currentSlot };
             inv.slots[activeIdx] = {
               item: itemData.weaponData || itemData.consumableData,
               currentMag: itemData.weaponData ? itemData.weaponData.magSize : undefined,
               reserveAmmo: itemData.weaponData ? 60 : undefined,
               count: itemData.count || 1
             };
-            window.Game.UI.addPickupFeed(`Picked up ${itemData.name}`, itemData.color);
-            return;
-          }
+            window.Game.UI.addPickupFeed(`Swapped for ${itemData.name}`, itemData.color);
 
-          const emptySlotIdx = inv.getFirstEmptySlotIndex();
-          if (emptySlotIdx !== -1) {
-            inv.slots[emptySlotIdx] = {
-              item: itemData.weaponData || itemData.consumableData,
-              currentMag: itemData.weaponData ? itemData.weaponData.magSize : undefined,
-              reserveAmmo: itemData.weaponData ? 60 : undefined,
-              count: itemData.count || 1
-            };
-            window.Game.UI.addPickupFeed(`Picked up ${itemData.name}`, itemData.color);
-            return;
-          }
-
-          const oldSlot = { ...currentSlot };
-          inv.slots[activeIdx] = {
-            item: itemData.weaponData || itemData.consumableData,
-            currentMag: itemData.weaponData ? itemData.weaponData.magSize : undefined,
-            reserveAmmo: itemData.weaponData ? 60 : undefined,
-            count: itemData.count || 1
-          };
-          window.Game.UI.addPickupFeed(`Swapped for ${itemData.name}`, itemData.color);
-
-          const droppedOldItem = new window.Game.GroundItem(player.x, player.y, player.currentFloor, {
-            type: oldSlot.item.type,
-            name: oldSlot.item.name,
-            color: oldSlot.item.color,
-            count: oldSlot.count,
-            weaponData: oldSlot.item.type === 'weapon' ? oldSlot.item : undefined,
-            consumableData: oldSlot.item.type === 'consumable' ? oldSlot.item : undefined
-          });
-          groundItems.push(droppedOldItem);
-        }
-      }
-
-      if (e.code === 'KeyE') {
-        for (const k of activeKiosks) {
-          if (k.floor === player.currentFloor && Math.hypot(k.x - player.x, k.y - player.y) < 65) {
-            if (window.Game.UI.isShopOpen) window.Game.UI.closeShop();
-            else window.Game.UI.openShop(player);
-            return;
+            const droppedOldItem = new window.Game.GroundItem(player.x, player.y, player.currentFloor, {
+              type: oldSlot.item.type,
+              name: oldSlot.item.name,
+              color: oldSlot.item.color,
+              count: oldSlot.count,
+              weaponData: oldSlot.item.type === 'weapon' ? oldSlot.item : undefined,
+              consumableData: oldSlot.item.type === 'consumable' ? oldSlot.item : undefined
+            });
+            groundItems.push(droppedOldItem);
           }
         }
 
-        for (const ch of activeChests) {
-          if (ch.floor === player.currentFloor && !ch.isOpen && Math.hypot(ch.x - player.x, ch.y - player.y) < 55) {
-            if (isMultiplayerActive) {
-              if (window.Game.Network.isHost) {
-                const rawDrops = ch.generateLootDrops();
-                const drops = rawDrops.map(d => ({
-                  ...d,
-                  id: `loot_${Date.now()}_${Math.floor(Math.random() * 10000)}`
-                }));
-                ch.openWithItems(drops, item => groundItems.push(item), mapData);
-                window.Game.Network.sendAction('chest_opened', { chestId: ch.id, drops });
-              } else {
-                window.Game.Network.sendAction('request_open_chest', { chestId: ch.id });
-              }
-            } else {
-              ch.openWithItems(ch.generateLootDrops(), item => groundItems.push(item), mapData);
-            }
-            return;
-          }
-        }
-
-        const level = mapData.levels[player.currentFloor];
-        if (level && level.doors) {
-          for (const d of level.doors) {
-            if (Math.hypot(d.hingeX - player.x, d.hingeY - player.y) < 65) {
-              const newIsOpen = !d.isOpen;
-              d.isOpen = newIsOpen;
-              if (isMultiplayerActive) {
-                window.Game.Network.sendAction('door_toggle', { doorId: d.id, isOpen: newIsOpen });
-              }
-              break;
-            }
-          }
-        }
-      }
-    });
-
-    window.addEventListener('keyup', e => {
-      keys[e.code] = false;
-      keys[e.key] = false;
-    });
-
-    window.addEventListener('wheel', e => {
-      if (isLocalDead || window.Game.UI.isShopOpen) return;
-      let idx = player.inventory.activeSlotIndex;
-      if (e.deltaY > 0) idx = (idx + 1) % 5;
-      else if (e.deltaY < 0) idx = (idx + 4) % 5;
-      player.inventory.switchSlot(idx);
-    });
-
-    window.addEventListener('mousemove', e => {
-      mouseScreen.x = e.clientX;
-      mouseScreen.y = e.clientY;
-      const tooltip = window.Game.UI.elements.cursorTooltip;
-      if (tooltip) {
-        tooltip.style.left = `${e.clientX}px`;
-        tooltip.style.top = `${e.clientY}px`;
-      }
-    });
-
-    window.addEventListener('mousedown', e => {
-      if (isLocalDead || window.Game.UI.isShopOpen) return;
-      if (e.button === 0) keys['mouseLeft'] = true;
-      else if (e.button === 2) keys['mouseRight'] = true;
-    });
-
-    window.addEventListener('mouseup', e => {
-      if (e.button === 0) keys['mouseLeft'] = false;
-      else if (e.button === 2) keys['mouseRight'] = false;
-    });
-
-    window.addEventListener('blur', () => {
-      keys['mouseLeft'] = false;
-      keys['mouseRight'] = false;
-    });
-
-    // ==========================================
-    // MAIN GAME LOOP & COMBAT TICK
-    // ==========================================
-    let lastTime = performance.now();
-
-    function gameLoop(now) {
-      const dt = Math.min((now - lastTime) / 1000, 0.1);
-      lastTime = now;
-
-      const myId = window.Game.Network.myId || 'local_player';
-
-      // Resurgence Death Countdown Tick
-      if (isLocalDead && respawnCountdown > 0) {
-        respawnCountdown -= dt;
-        lblRedeployTimer.textContent = Math.max(0, Math.ceil(respawnCountdown)).toString();
-        if (respawnCountdown <= 0) {
-          executeRedeploy();
-        }
-      }
-
-      // Match timer countdown & Resurgence phase switch
-      if (matchTimeRemaining > 0) {
-        matchTimeRemaining = Math.max(0, matchTimeRemaining - dt);
-        const phaseEl = document.getElementById('match-phase');
-        if (phaseEl) {
-          if (matchTimeRemaining > 120) {
-            phaseEl.textContent = "RESURGENCE ACTIVE";
-            phaseEl.style.color = "#38bdf8";
-          } else {
-            phaseEl.textContent = "RESURGENCE CLOSED";
-            phaseEl.style.color = "#f43f5e";
-          }
-        }
-        if (matchTimeRemaining === 0) {
-          window.Game.UI.addPickupFeed("Time expired! Final Collapse!", "#ef4444");
-        }
-      }
-
-      // Multiplayer Snapshot Broadcast
-      if (isMultiplayerActive) {
-        if (window.Game.Network.isHost) {
-          const playerSnapshots = {};
-          playerSnapshots[myId] = {
-            name: localPlayerName,
-            x: player.x,
-            y: player.y,
-            angle: player.angle,
-            floor: player.currentFloor,
-            hp: player.hp,
-            armorHp: player.armorHp,
-            isDead: player.isDead
-          };
-          for (const id in remotePlayers) {
-            const rp = remotePlayers[id];
-            playerSnapshots[id] = {
-              name: rp.name,
-              x: rp.x,
-              y: rp.y,
-              angle: rp.angle,
-              floor: rp.currentFloor,
-              hp: rp.hp,
-              armorHp: rp.armorHp,
-              isDead: rp.isDead
-            };
-          }
-
-          const doorStates = {};
-          ['floor1', 'floor2', 'roof'].forEach(flr => {
-            const lvl = mapData.levels[flr];
-            if (lvl && lvl.doors) lvl.doors.forEach(d => doorStates[d.id] = d.isOpen);
-          });
-
-          const openedChests = activeChests.filter(c => c.isOpen).map(c => c.id);
-
-          window.Game.Network.broadcastSnapshot({
-            players: playerSnapshots,
-            doors: doorStates,
-            openedChests: openedChests
-          });
-        } else {
-          window.Game.Network.sendClientInput({
-            x: player.x,
-            y: player.y,
-            angle: player.angle,
-            floor: player.currentFloor,
-            hp: player.hp,
-            armorHp: player.armorHp,
-            isDead: player.isDead
-          });
-        }
-      }
-
-      for (const id in remotePlayers) remotePlayers[id].update(dt);
-
-      window.Game.MapRenderer.updateDoors(dt, mapData);
-      for (const ch of activeChests) ch.update(dt);
-      for (const k of activeKiosks) k.update(dt);
-      for (const item of groundItems) item.update(dt);
-
-      // Auto-collect cash, tokens, ammo
-      if (!isLocalDead) {
-        for (let i = groundItems.length - 1; i >= 0; i--) {
-          const item = groundItems[i];
-          if (item.floor === player.currentFloor) {
-            const dist = Math.hypot(item.x - player.x, item.y - player.y);
-            if (dist < player.radius + item.radius + 10) {
-              let collected = false;
-              if (item.item.type === 'cash') {
-                player.inventory.cash += item.item.value;
-                window.Game.UI.addPickupFeed(`+$${item.item.value} Cash`, '#4ade80');
-                collected = true;
-              } else if (item.item.type === 'token') {
-                player.inventory.respawnTokens += item.item.value;
-                window.Game.UI.addPickupFeed(`+${item.item.value} Revive Token!`, '#facc15');
-                collected = true;
-              } else if (item.item.type === 'ammo') {
-                const active = player.inventory.getActiveSlot();
-                if (active && active.item && active.item.type === 'weapon') active.reserveAmmo += item.item.value;
-                else {
-                  const wepSlot = player.inventory.slots.find(s => s && s.item && s.item.type === 'weapon');
-                  if (wepSlot) wepSlot.reserveAmmo += item.item.value;
-                }
-                window.Game.UI.addPickupFeed(`+${item.item.value} Ammo`, '#fbbf24');
-                collected = true;
-              }
-
-              if (collected) {
-                if (isMultiplayerActive) {
-                  window.Game.Network.sendAction(window.Game.Network.isHost ? 'item_despawn' : 'item_pickup_request', { itemId: item.id });
-                }
-                groundItems.splice(i, 1);
-              }
-            }
-          }
-        }
-      }
-
-      const mouseWorld = camera.screenToWorld(mouseScreen.x, mouseScreen.y);
-      camera.update(dt, player.isAiming, player.x, player.y, mouseWorld);
-
-      if (!isLocalDead && !window.Game.UI.isShopOpen && menuOverlay.style.display === 'none') {
-        player.update(dt, keys, mouseWorld, mapData, b => bullets.push(b));
-      }
-
-      // ==========================================
-      // BULLET SIMULATION & PVP HIT REGISTRATION
-      // ==========================================
-      for (let i = bullets.length - 1; i >= 0; i--) {
-        const b = bullets[i];
-        b.update(dt, mapData);
-
-        if (!b.isDead) {
-          // Check collision against remote opponents
-          for (const pid in remotePlayers) {
-            const rp = remotePlayers[pid];
-            if (!rp.isDead && rp.currentFloor === b.floor && b.shooterId !== rp.id) {
-              if (Math.hypot(b.x - rp.x, b.y - rp.y) < rp.radius + b.radius) {
-                b.isDead = true;
-                const result = rp.takeDamage(b.damage);
-                spawnDamagePop(rp.x, rp.y, b.damage, result.armorLost > 0);
-
-                if (window.Game.Network && window.Game.Network.sendAction) {
-                  window.Game.Network.sendAction('player_damaged', {
-                    targetId: rp.id,
-                    amount: b.damage,
-                    x: rp.x,
-                    y: rp.y,
-                    isShield: result.armorLost > 0,
-                    attackerName: localPlayerName
-                  });
-                }
-
-                // If remote opponent just died, spawn their drops locally
-                if (rp.isDead) {
-                  dropPlayerLoot(rp.x, rp.y, rp.currentFloor, { slots: [], cash: 200 }, false);
-                }
-                break;
-              }
+        if (e.code === 'KeyE') {
+          for (const k of activeKiosks) {
+            if (k.floor === player.currentFloor && Math.hypot(k.x - player.x, k.y - player.y) < 65) {
+              if (window.Game.UI.isShopOpen) window.Game.UI.closeShop();
+              else window.Game.UI.openShop(player);
+              return;
             }
           }
 
-          // Check collision against local player
-          if (!b.isDead && !player.isDead && !isLocalDead && player.currentFloor === b.floor && b.shooterId !== myId) {
-            if (Math.hypot(b.x - player.x, b.y - player.y) < player.radius + b.radius) {
-              b.isDead = true;
-              const result = player.takeDamage(b.damage);
-              spawnDamagePop(player.x, player.y, b.damage, result.armorLost > 0);
-
-              if (window.Game.Network && window.Game.Network.sendAction) {
-                window.Game.Network.sendAction('player_damaged', {
-                  targetId: myId,
-                  amount: b.damage,
-                  x: player.x,
-                  y: player.y,
-                  isShield: result.armorLost > 0,
-                  attackerName: 'Opponent'
-                });
-              }
-
-              if (player.isDead) {
-                triggerPlayerDeath();
-              }
-            }
-          }
-        }
-
-        if (b.isDead) bullets.splice(i, 1);
-      }
-
-      // Update Floating Damage Indicators
-      for (let i = damagePops.length - 1; i >= 0; i--) {
-        const p = damagePops[i];
-        p.y += p.vy * dt;
-        p.alpha -= dt * 1.8;
-        if (p.alpha <= 0) damagePops.splice(i, 1);
-      }
-
-      // Check item hover for tooltip
-      hoveredGroundItem = null;
-      if (!isLocalDead && !window.Game.UI.isShopOpen) {
-        for (const item of groundItems) {
-          if (item.floor === player.currentFloor) {
-            if (item.item.type === 'cash' || item.item.type === 'ammo' || item.item.type === 'token') continue;
-            const distToMouse = Math.hypot(item.x - mouseWorld.x, item.y - mouseWorld.y);
-            const distToPlayer = Math.hypot(item.x - player.x, item.y - player.y);
-            if (distToMouse < 24 && distToPlayer < 90) {
-              hoveredGroundItem = item;
-              break;
-            }
-          }
-        }
-      }
-
-      const tooltip = window.Game.UI.elements.cursorTooltip;
-      if (hoveredGroundItem) {
-        const inv = player.inventory;
-        const action = inv.isFull() ? 'Swap for' : 'Pick up';
-        tooltip.textContent = `[F] ${action} ${hoveredGroundItem.item.name}`;
-        tooltip.style.display = 'block';
-      } else {
-        tooltip.style.display = 'none';
-      }
-
-      const hintElem = window.Game.UI.elements.hintElem;
-      let hintText = null;
-
-      if (!isLocalDead) {
-        for (const k of activeKiosks) {
-          if (k.floor === player.currentFloor && Math.hypot(k.x - player.x, k.y - player.y) < 65) {
-            hintText = "Press [E] to Access Buy Station";
-            break;
-          }
-        }
-
-        if (!hintText) {
           for (const ch of activeChests) {
             if (ch.floor === player.currentFloor && !ch.isOpen && Math.hypot(ch.x - player.x, ch.y - player.y) < 55) {
-              hintText = "Press [E] to Open Supply Crate";
-              break;
+              if (isMultiplayerActive) {
+                if (window.Game.Network.isHost) {
+                  const rawDrops = ch.generateLootDrops();
+                  const drops = rawDrops.map(d => ({
+                    ...d,
+                    id: `loot_${Date.now()}_${Math.floor(Math.random() * 10000)}`
+                  }));
+                  ch.openWithItems(drops, item => groundItems.push(item), mapData);
+                  window.Game.Network.sendAction('chest_opened', { chestId: ch.id, drops });
+                } else {
+                  window.Game.Network.sendAction('request_open_chest', { chestId: ch.id });
+                }
+              } else {
+                ch.openWithItems(ch.generateLootDrops(), item => groundItems.push(item), mapData);
+              }
+              return;
             }
           }
-        }
 
-        if (!hintText) {
           const level = mapData.levels[player.currentFloor];
           if (level && level.doors) {
             for (const d of level.doors) {
               if (Math.hypot(d.hingeX - player.x, d.hingeY - player.y) < 65) {
-                hintText = d.isOpen ? "Press [E] to Close Door" : "Press [E] to Open Door";
+                const newIsOpen = !d.isOpen;
+                d.isOpen = newIsOpen;
+                if (isMultiplayerActive) {
+                  window.Game.Network.sendAction('door_toggle', { doorId: d.id, isOpen: newIsOpen });
+                }
                 break;
               }
             }
           }
         }
-      }
+      });
 
-      hintElem.style.display = (hintText && !window.Game.UI.isShopOpen) ? 'block' : 'none';
-      if (hintText) hintElem.textContent = hintText;
+      window.addEventListener('keyup', e => {
+        keys[e.code] = false;
+        keys[e.key] = false;
+      });
 
-      const maxCols = mapData.cols || cfg.MAP_COLS;
-      const maxRows = mapData.rows || cfg.MAP_ROWS;
-      camera.follow(player.x, player.y, maxCols * cfg.TILE_SIZE, maxRows * cfg.TILE_SIZE);
-      window.Game.UI.update(player, matchTimeRemaining);
+      window.addEventListener('wheel', e => {
+        if (isLocalDead || window.Game.UI.isShopOpen) return;
+        let idx = player.inventory.activeSlotIndex;
+        if (e.deltaY > 0) idx = (idx + 1) % 5;
+        else if (e.deltaY < 0) idx = (idx + 4) % 5;
+        player.inventory.switchSlot(idx);
+      });
 
-      // ==========================================
-      // RENDER PIPELINE
-      // ==========================================
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      camera.apply(ctx);
+      window.addEventListener('mousemove', e => {
+        mouseScreen.x = e.clientX;
+        mouseScreen.y = e.clientY;
+        const tooltip = window.Game.UI.elements.cursorTooltip;
+        if (tooltip) {
+          tooltip.style.left = `${e.clientX}px`;
+          tooltip.style.top = `${e.clientY}px`;
+        }
+      });
 
-      // 1. World Map
-      window.Game.MapRenderer.drawLevel(ctx, mapData, player.currentFloor);
+      window.addEventListener('mousedown', e => {
+        if (isLocalDead || window.Game.UI.isShopOpen) return;
+        if (e.button === 0) keys['mouseLeft'] = true;
+        else if (e.button === 2) keys['mouseRight'] = true;
+      });
 
-      // 2. Kiosks & Supply Chests (Always visible through shadow)
-      for (const k of activeKiosks) {
-        if (k.floor === player.currentFloor) k.draw(ctx);
-      }
-      for (const ch of activeChests) {
-        if (ch.floor === player.currentFloor) ch.draw(ctx);
-      }
+      window.addEventListener('mouseup', e => {
+        if (e.button === 0) keys['mouseLeft'] = false;
+        else if (e.button === 2) keys['mouseRight'] = false;
+      });
 
-      // 3. Ground Items
-      for (const item of groundItems) {
-        if (item.floor === player.currentFloor) item.draw(ctx);
-      }
+      window.addEventListener('blur', () => {
+        keys['mouseLeft'] = false;
+        keys['mouseRight'] = false;
+      });
 
-      // 4. Bullets
-      for (const b of bullets) {
-        if (b.floor === player.currentFloor) b.draw(ctx);
-      }
+      let lastTime = performance.now();
 
-      // 5. Raycast Shadows (Cast over world, semi-transparent)
-      window.Game.Vision.drawFieldOfView(ctx, player.x, player.y, mapData, player.currentFloor, camera);
+      function gameLoop(now) {
+        const dt = Math.min((now - lastTime) / 1000, 0.1);
+        lastTime = now;
 
-      // 6. Opponents (Culled when blocked by walls)
-      for (const id in remotePlayers) {
-        const rp = remotePlayers[id];
-        if (rp.currentFloor === player.currentFloor && !rp.isDead) {
-          const dist = Math.hypot(rp.x - player.x, rp.y - player.y);
-          if (dist < 44 || window.Game.Vision.hasLineOfSight(player.x, player.y, rp.x, rp.y, mapData, player.currentFloor)) {
-            rp.draw(ctx);
+        const myId = window.Game.Network.myId || 'local_player';
+
+        if (isLocalDead && respawnCountdown > 0) {
+          respawnCountdown -= dt;
+          lblRedeployTimer.textContent = Math.max(0, Math.ceil(respawnCountdown)).toString();
+          if (respawnCountdown <= 0) {
+            executeRedeploy();
           }
         }
+
+        if (matchTimeRemaining > 0) {
+          matchTimeRemaining = Math.max(0, matchTimeRemaining - dt);
+          const phaseEl = document.getElementById('match-phase');
+          if (phaseEl) {
+            if (matchTimeRemaining > 120) {
+              phaseEl.textContent = "RESURGENCE ACTIVE";
+              phaseEl.style.color = "#38bdf8";
+            } else {
+              phaseEl.textContent = "RESURGENCE CLOSED";
+              phaseEl.style.color = "#f43f5e";
+            }
+          }
+          if (matchTimeRemaining === 0) {
+            window.Game.UI.addPickupFeed("Time expired! Final Collapse!", "#ef4444");
+          }
+        }
+
+        if (isMultiplayerActive) {
+          if (window.Game.Network.isHost) {
+            const playerSnapshots = {};
+            playerSnapshots[myId] = {
+              name: localPlayerName,
+              x: player.x,
+              y: player.y,
+              angle: player.angle,
+              floor: player.currentFloor,
+              hp: player.hp,
+              armorHp: player.armorHp,
+              isDead: player.isDead
+            };
+            for (const id in remotePlayers) {
+              const rp = remotePlayers[id];
+              playerSnapshots[id] = {
+                name: rp.name,
+                x: rp.x,
+                y: rp.y,
+                angle: rp.angle,
+                floor: rp.currentFloor,
+                hp: rp.hp,
+                armorHp: rp.armorHp,
+                isDead: rp.isDead
+              };
+            }
+
+            const doorStates = {};
+            ['floor1', 'floor2', 'roof'].forEach(flr => {
+              const lvl = mapData.levels[flr];
+              if (lvl && lvl.doors) lvl.doors.forEach(d => doorStates[d.id] = d.isOpen);
+            });
+
+            const openedChests = activeChests.filter(c => c.isOpen).map(c => c.id);
+
+            window.Game.Network.broadcastSnapshot({
+              players: playerSnapshots,
+              doors: doorStates,
+              openedChests: openedChests
+            });
+          } else {
+            window.Game.Network.sendClientInput({
+              x: player.x,
+              y: player.y,
+              angle: player.angle,
+              floor: player.currentFloor,
+              hp: player.hp,
+              armorHp: player.armorHp,
+              isDead: player.isDead
+            });
+          }
+        }
+
+        for (const id in remotePlayers) remotePlayers[id].update(dt);
+
+        window.Game.MapRenderer.updateDoors(dt, mapData);
+        for (const ch of activeChests) ch.update(dt);
+        for (const k of activeKiosks) k.update(dt);
+        for (const item of groundItems) item.update(dt);
+
+        if (!isLocalDead) {
+          for (let i = groundItems.length - 1; i >= 0; i--) {
+            const item = groundItems[i];
+            if (item.floor === player.currentFloor) {
+              const dist = Math.hypot(item.x - player.x, item.y - player.y);
+              if (dist < player.radius + item.radius + 10) {
+                let collected = false;
+                if (item.item.type === 'cash') {
+                  player.inventory.cash += item.item.value;
+                  window.Game.UI.addPickupFeed(`+$${item.item.value} Cash`, '#4ade80');
+                  collected = true;
+                } else if (item.item.type === 'token') {
+                  player.inventory.respawnTokens += item.item.value;
+                  window.Game.UI.addPickupFeed(`+${item.item.value} Revive Token!`, '#facc15');
+                  collected = true;
+                } else if (item.item.type === 'ammo') {
+                  const active = player.inventory.getActiveSlot();
+                  if (active && active.item && active.item.type === 'weapon') active.reserveAmmo += item.item.value;
+                  else {
+                    const wepSlot = player.inventory.slots.find(s => s && s.item && s.item.type === 'weapon');
+                    if (wepSlot) wepSlot.reserveAmmo += item.item.value;
+                  }
+                  window.Game.UI.addPickupFeed(`+${item.item.value} Ammo`, '#fbbf24');
+                  collected = true;
+                }
+
+                if (collected) {
+                  if (isMultiplayerActive) {
+                    window.Game.Network.sendAction(window.Game.Network.isHost ? 'item_despawn' : 'item_pickup_request', { itemId: item.id });
+                  }
+                  groundItems.splice(i, 1);
+                }
+              }
+            }
+          }
+        }
+
+        const mouseWorld = camera.screenToWorld(mouseScreen.x, mouseScreen.y);
+        camera.update(dt, player.isAiming, player.x, player.y, mouseWorld);
+
+        if (!isLocalDead && !window.Game.UI.isShopOpen && menuOverlay.style.display === 'none') {
+          player.update(dt, keys, mouseWorld, mapData, b => bullets.push(b));
+        }
+
+        for (let i = bullets.length - 1; i >= 0; i--) {
+          const b = bullets[i];
+          b.update(dt, mapData);
+
+          if (!b.isDead) {
+            for (const pid in remotePlayers) {
+              const rp = remotePlayers[pid];
+              if (!rp.isDead && rp.currentFloor === b.floor && b.shooterId !== rp.id) {
+                if (Math.hypot(b.x - rp.x, b.y - rp.y) < rp.radius + b.radius) {
+                  b.isDead = true;
+                  const result = rp.takeDamage(b.damage);
+                  spawnDamagePop(rp.x, rp.y, b.damage, result.armorLost > 0);
+
+                  if (window.Game.Network && window.Game.Network.sendAction) {
+                    window.Game.Network.sendAction('player_damaged', {
+                      targetId: rp.id,
+                      amount: b.damage,
+                      x: rp.x,
+                      y: rp.y,
+                      isShield: result.armorLost > 0,
+                      attackerName: localPlayerName
+                    });
+                  }
+
+                  if (rp.isDead) {
+                    dropPlayerLoot(rp.x, rp.y, rp.currentFloor, { slots: [], cash: 200 }, false);
+                  }
+                  break;
+                }
+              }
+            }
+
+            if (!b.isDead && !player.isDead && !isLocalDead && player.currentFloor === b.floor && b.shooterId !== myId) {
+              if (Math.hypot(b.x - player.x, b.y - player.y) < player.radius + b.radius) {
+                b.isDead = true;
+                const result = player.takeDamage(b.damage);
+                spawnDamagePop(player.x, player.y, b.damage, result.armorLost > 0);
+
+                if (window.Game.Network && window.Game.Network.sendAction) {
+                  window.Game.Network.sendAction('player_damaged', {
+                    targetId: myId,
+                    amount: b.damage,
+                    x: player.x,
+                    y: player.y,
+                    isShield: result.armorLost > 0,
+                    attackerName: 'Opponent'
+                  });
+                }
+
+                if (player.isDead) {
+                  triggerPlayerDeath();
+                }
+              }
+            }
+          }
+
+          if (b.isDead) bullets.splice(i, 1);
+        }
+
+        for (let i = damagePops.length - 1; i >= 0; i--) {
+          const p = damagePops[i];
+          p.y += p.vy * dt;
+          p.alpha -= dt * 1.8;
+          if (p.alpha <= 0) damagePops.splice(i, 1);
+        }
+
+        hoveredGroundItem = null;
+        if (!isLocalDead && !window.Game.UI.isShopOpen) {
+          for (const item of groundItems) {
+            if (item.floor === player.currentFloor) {
+              if (item.item.type === 'cash' || item.item.type === 'ammo' || item.item.type === 'token') continue;
+              const distToMouse = Math.hypot(item.x - mouseWorld.x, item.y - mouseWorld.y);
+              const distToPlayer = Math.hypot(item.x - player.x, item.y - player.y);
+              if (distToMouse < 24 && distToPlayer < 90) {
+                hoveredGroundItem = item;
+                break;
+              }
+            }
+          }
+        }
+
+        const tooltip = window.Game.UI.elements.cursorTooltip;
+        if (hoveredGroundItem) {
+          const inv = player.inventory;
+          const action = inv.isFull() ? 'Swap for' : 'Pick up';
+          tooltip.textContent = `[F] ${action} ${hoveredGroundItem.item.name}`;
+          tooltip.style.display = 'block';
+        } else {
+          tooltip.style.display = 'none';
+        }
+
+        const hintElem = window.Game.UI.elements.hintElem;
+        let hintText = null;
+
+        if (!isLocalDead) {
+          for (const k of activeKiosks) {
+            if (k.floor === player.currentFloor && Math.hypot(k.x - player.x, k.y - player.y) < 65) {
+              hintText = "Press [E] to Access Buy Station";
+              break;
+            }
+          }
+
+          if (!hintText) {
+            for (const ch of activeChests) {
+              if (ch.floor === player.currentFloor && !ch.isOpen && Math.hypot(ch.x - player.x, ch.y - player.y) < 55) {
+                hintText = "Press [E] to Open Supply Crate";
+                break;
+              }
+            }
+          }
+
+          if (!hintText) {
+            const level = mapData.levels[player.currentFloor];
+            if (level && level.doors) {
+              for (const d of level.doors) {
+                if (Math.hypot(d.hingeX - player.x, d.hingeY - player.y) < 65) {
+                  hintText = d.isOpen ? "Press [E] to Close Door" : "Press [E] to Open Door";
+                  break;
+                }
+              }
+            }
+          }
+        }
+
+        hintElem.style.display = (hintText && !window.Game.UI.isShopOpen) ? 'block' : 'none';
+        if (hintText) hintElem.textContent = hintText;
+
+        const maxCols = mapData.cols || cfg.MAP_COLS;
+        const maxRows = mapData.rows || cfg.MAP_ROWS;
+        camera.follow(player.x, player.y, maxCols * cfg.TILE_SIZE, maxRows * cfg.TILE_SIZE);
+        window.Game.UI.update(player, matchTimeRemaining);
+
+        // ==========================================
+        // RENDER PIPELINE
+        // ==========================================
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        camera.apply(ctx);
+
+        // 1. World Map
+        window.Game.MapRenderer.drawLevel(ctx, mapData, player.currentFloor);
+
+        // 2. Kiosks & Supply Chests (Always visible through shadow)
+        for (const k of activeKiosks) {
+          if (k.floor === player.currentFloor) k.draw(ctx);
+        }
+        for (const ch of activeChests) {
+          if (ch.floor === player.currentFloor) ch.draw(ctx);
+        }
+
+        // 3. Ground Items
+        for (const item of groundItems) {
+          if (item.floor === player.currentFloor) item.draw(ctx);
+        }
+
+        // 4. Bullets
+        for (const b of bullets) {
+          if (b.floor === player.currentFloor) b.draw(ctx);
+        }
+
+        // 5. Raycast Shadows (Cast over world, semi-transparent)
+        window.Game.Vision.drawFieldOfView(ctx, player.x, player.y, mapData, player.currentFloor, camera);
+
+        // 6. Opponents (Culled when blocked by walls)
+        for (const id in remotePlayers) {
+          const rp = remotePlayers[id];
+          if (rp.currentFloor === player.currentFloor && !rp.isDead) {
+            const dist = Math.hypot(rp.x - player.x, rp.y - player.y);
+            if (dist < 44 || window.Game.Vision.hasLineOfSight(player.x, player.y, rp.x, rp.y, mapData, player.currentFloor)) {
+              rp.draw(ctx);
+            }
+          }
+        }
+
+        // 7. Local Player
+        if (!isLocalDead) {
+          player.draw(ctx);
+        }
+
+        // 8. Floating Damage Text
+        for (const pop of damagePops) {
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, pop.alpha);
+          ctx.font = 'bold 15px -apple-system, monospace';
+          ctx.fillStyle = pop.color;
+          ctx.strokeStyle = '#000000';
+          ctx.lineWidth = 3;
+          ctx.textAlign = 'center';
+          ctx.strokeText(pop.text, pop.x, pop.y);
+          ctx.fillText(pop.text, pop.x, pop.y);
+          ctx.restore();
+        }
+
+        camera.restore(ctx);
+
+        // 9. Minimap (Screen space)
+        minimap.draw(mapData, player, activeChests, activeKiosks, camera);
+
+        requestAnimationFrame(gameLoop);
       }
-
-      // 7. Local Player
-      if (!isLocalDead) {
-        player.draw(ctx);
-      }
-
-      // 8. Floating Damage Text
-      for (const pop of damagePops) {
-        ctx.save();
-        ctx.globalAlpha = Math.max(0, pop.alpha);
-        ctx.font = 'bold 15px -apple-system, monospace';
-        ctx.fillStyle = pop.color;
-        ctx.strokeStyle = '#000000';
-        ctx.lineWidth = 3;
-        ctx.textAlign = 'center';
-        ctx.strokeText(pop.text, pop.x, pop.y);
-        ctx.fillText(pop.text, pop.x, pop.y);
-        ctx.restore();
-      }
-
-      camera.restore(ctx);
-
-      // 9. Minimap (Screen space)
-      minimap.draw(mapData, player, activeChests, activeKiosks, camera);
 
       requestAnimationFrame(gameLoop);
     }
 
-    requestAnimationFrame(gameLoop);
+    window.addEventListener('DOMContentLoaded', initGame);
   </script>
 </body>
 </html>
