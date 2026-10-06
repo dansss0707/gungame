@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Arena Map Editor</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+      user-select: none;
+    }
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #0b0e14;
+      color: #c9d1d9;
+    }
+    #viewport {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      cursor: crosshair;
+    }
+    .panel {
+      position: absolute;
+      background: rgba(18, 22, 34, 0.94);
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 10px 14px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+      z-index: 10;
+    }
+    #top-bar {
+      top: 14px;
+      left: 14px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    #tools-panel {
+      top: 66px;
+      left: 14px;
+      width: 250px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      max-height: calc(100vh - 84px);
+      overflow-y: auto;
+    }
+    .btn {
+      background: #21262d;
+      border: 1px solid #363b42;
+      color: #e6edf3;
+      padding: 6px 12px;
+      font-size: 13px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .btn:hover {
+      background: #30363d;
+      border-color: #8b949e;
+    }
+    .btn.active {
+      background: #1f6feb;
+      border-color: #58a6ff;
+      color: #fff;
+    }
+    .btn-action {
+      background: #238636;
+      border-color: #2ea043;
+      color: #fff;
+    }
+    .btn-action:hover {
+      background: #2ea043;
+    }
+    .section-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #8b949e;
+      margin-bottom: 6px;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+    input[type="color"] {
+      border: none;
+      width: 28px;
+      height: 28px;
+      border-radius: 4px;
+      cursor: pointer;
+      background: none;
+    }
+    .num-input {
+      width: 52px;
+      background: #161b22;
+      color: #fff;
+      border: 1px solid #30363d;
+      padding: 3px 6px;
+      border-radius: 4px;
+      font-size: 12px;
+      text-align: center;
+    }
+    .key-badge {
+      background: #21262d;
+      border: 1px solid #484f58;
+      padding: 1px 4px;
+      border-radius: 4px;
+      font-size: 11px;
+    }
+    #status-toast {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #238636;
+      color: #fff;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      display: none;
+      z-index: 100;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="status-toast">Map Added to Game!</div>
+
+  <div id="top-bar" class="panel">
+    <button class="btn btn-action" id="btn-save-to-game">Save & Add to Game</button>
+    <button class="btn" id="btn-open-game">Launch Game</button>
+    <button class="btn" id="btn-clear">Clear Floor</button>
+    <span style="color:#484f58">|</span>
+
+    <span style="font-size:12px; color:#8b949e;">Size:</span>
+    <input type="number" id="inp-cols" class="num-input" min="10" max="150" value="40" title="Columns">
+    <span style="color:#6e7681; font-size:12px;">×</span>
+    <input type="number" id="inp-rows" class="num-input" min="10" max="150" value="40" title="Rows">
+    <span style="color:#484f58">|</span>
+
+    <span style="font-size:12px; color:#8b949e;">Floor:</span>
+    <button class="btn active" id="flr-1">Floor 1</button>
+    <button class="btn" id="flr-2">Floor 2</button>
+    <button class="btn" id="flr-roof">Roof</button>
+    <span style="color:#484f58">|</span>
+    <span style="font-size:12px; color:#8b949e;">Zoom: <span id="lbl-zoom">100%</span></span>
+  </div>
+
+  <div id="tools-panel" class="panel">
+    <div>
+      <div class="section-title">Primary Tool</div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+        <button class="btn active" id="tool-paint">Tiles</button>
+        <button class="btn" id="tool-boxfill" style="color:#38bdf8;">Box Fill</button>
+        <button class="btn" id="tool-wall">Wall</button>
+        <button class="btn" id="tool-door">Door</button>
+        <button class="btn" id="tool-window">Window</button>
+        <button class="btn" id="tool-stairs">Stairs</button>
+        <button class="btn" id="tool-chest">Chest</button>
+        <button class="btn" id="tool-kiosk" style="color:#4ade80;">Kiosk ($)</button>
+        <button class="btn" id="tool-spawn" style="color:#06b6d4; grid-column: span 2;">Spawn Point</button>
+        <button class="btn" id="tool-zone" style="grid-column: span 2;">Fog Zone</button>
+        <button class="btn" id="tool-erase" style="grid-column: span 2;">Eraser</button>
+      </div>
+    </div>
+
+    <!-- Tile & BoxFill Options -->
+    <div id="sub-tile" class="sub-panel">
+      <div class="section-title">Tile & BoxFill Options</div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px; margin-bottom: 8px;">
+        <button class="btn active" id="tile-type-floor">Floor</button>
+        <button class="btn" id="tile-type-solid">Block</button>
+      </div>
+      <div class="row">
+        <span>Color</span>
+        <input type="color" id="tile-color" value="#1f293d">
+      </div>
+      <div id="boxfill-hint" style="display:none; font-size:11px; color:#38bdf8; line-height:1.3; margin-top:4px;">
+        Click and drag on the map to marquee-fill large rooms or walls instantly.
+      </div>
+    </div>
+
+    <!-- Wall Settings -->
+    <div id="sub-wall" class="sub-panel" style="display:none;">
+      <div class="section-title">Wall Options</div>
+      <div class="row">
+        <span>Color</span>
+        <input type="color" id="wall-color" value="#8b949e">
+      </div>
+      <div class="row">
+        <span>Length</span>
+        <input type="range" id="wall-length" min="48" max="240" step="24" value="96" style="width:110px;">
+        <span id="lbl-wall-length">96px</span>
+      </div>
+      <div style="font-size: 11px; color:#8b949e;">Press <span class="key-badge">R</span> to rotate 90°.</div>
+    </div>
+
+    <!-- Window Settings -->
+    <div id="sub-window" class="sub-panel" style="display:none;">
+      <div class="section-title">Window Options</div>
+      <div class="row">
+        <span>Width</span>
+        <input type="range" id="window-length" min="32" max="144" step="16" value="48" style="width:110px;">
+        <span id="lbl-window-length">48px</span>
+      </div>
+      <div style="font-size: 11px; color:#38bdf8;">See-through glass. Allows vision & bullets, blocks movement.</div>
+    </div>
+
+    <!-- Door Settings -->
+    <div id="sub-door" class="sub-panel" style="display:none;">
+      <div class="section-title">Door Options</div>
+      <div class="row">
+        <span>Width</span>
+        <input type="range" id="door-width" min="32" max="64" step="8" value="48" style="width:110px;">
+        <span id="lbl-door-width">48px</span>
+      </div>
+      <div style="font-size: 11px; color:#d29922; line-height: 1.4;">
+        White dot = <b>Hinge</b>. Click on a wall corner to anchor it. Press <span class="key-badge">R</span> to rotate.
+      </div>
+    </div>
+
+    <!-- Stairs Settings -->
+    <div id="sub-stairs" class="sub-panel" style="display:none;">
+      <div class="section-title">Stairs Direction</div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px; margin-bottom: 8px;">
+        <button class="btn active" id="stair-dir-up">UP Stairs</button>
+        <button class="btn" id="stair-dir-down">DOWN Stairs</button>
+      </div>
+      <div class="row">
+        <span>Length</span>
+        <input type="range" id="stairs-length" min="1" max="6" step="1" value="3" style="width:110px;">
+        <span id="lbl-stairs-length">3 Tiles</span>
+      </div>
+      <div id="stair-target-info" style="font-size: 11px; color:#58a6ff; margin-bottom: 6px;">Target: Floor 2</div>
+      <div style="font-size: 11px; color:#8b949e;">Reach top to ascend, bottom to descend. Press <span class="key-badge">R</span> to rotate.</div>
+    </div>
+
+    <!-- Chest Settings -->
+    <div id="sub-chest" class="sub-panel" style="display:none;">
+      <div class="section-title">Supply Chest</div>
+      <div style="font-size: 11px; color:#f59e0b; line-height: 1.4;">
+        Click anywhere on the floor to place a military supply cache. Spawns weapons, cash, armor, and ammo.
+      </div>
+    </div>
+
+    <!-- Kiosk Settings -->
+    <div id="sub-kiosk" class="sub-panel" style="display:none;">
+      <div class="section-title">Buy Station Kiosk</div>
+      <div style="font-size: 11px; color:#4ade80; line-height: 1.4;">
+        Click anywhere to place a Buy Station terminal. Players can spend collected cash to buy weapons, shields, and revive tokens.
+      </div>
+    </div>
+
+    <!-- Spawn Point Settings -->
+    <div id="sub-spawn" class="sub-panel" style="display:none;">
+      <div class="section-title">Player Spawn Point</div>
+      <div style="font-size: 11px; color:#06b6d4; line-height: 1.4;">
+        Click to place designated spawn beacons. The player will deploy here on match start. If multiple are placed, one will be chosen at random.
+      </div>
+    </div>
+
+    <!-- Zone Settings -->
+    <div id="sub-zone" class="sub-panel" style="display:none;">
+      <div class="section-title">Interior Fog Zone</div>
+      <div class="row">
+        <span>Zone ID</span>
+        <input type="number" id="zone-id" min="1" max="20" value="1" class="num-input">
+      </div>
+      <div style="font-size: 11px; color:#8b949e;">Paint inside rooms to define building interiors.</div>
+    </div>
+  </div>
+
+  <canvas id="viewport"></canvas>
+
+  <script src="src/common.js"></script>
+  <script src="src/editor_boxfill.js"></script>
+  <script>
+    const canvas = document.getElementById('viewport');
+    const ctx = canvas.getContext('2d');
+    const cfg = window.Game.CONFIG;
+
+    let zoom = 1.0;
+    let panX = 80;
+    let panY = 60;
+    let isPanning = false;
+    let lastMouse = { x: 0, y: 0 };
+    let currentMouseWorld = { x: 0, y: 0 };
+    let isMouseDown = false;
+
+    let activeFloor = 'floor1';
+    let activeTool = 'paint';
+    let paintType = 'floor';
+    let stairDirection = 'up';
+    let toolRotation = 0;
+
+    let mapDoc = window.Game.loadMapData();
+
+    const inpCols = document.getElementById('inp-cols');
+    const inpRows = document.getElementById('inp-rows');
+    inpCols.value = mapDoc.cols || cfg.MAP_COLS;
+    inpRows.value = mapDoc.rows || cfg.MAP_ROWS;
+
+    function applyMapSize() {
+      mapDoc.cols = Math.max(10, Math.min(150, parseInt(inpCols.value) || 40));
+      mapDoc.rows = Math.max(10, Math.min(150, parseInt(inpRows.value) || 40));
+      inpCols.value = mapDoc.cols;
+      inpRows.value = mapDoc.rows;
+    }
+    inpCols.onchange = applyMapSize;
+    inpRows.onchange = applyMapSize;
+
+    function resize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    function screenToWorld(sx, sy) {
+      return { x: (sx - panX) / zoom, y: (sy - panY) / zoom };
+    }
+
+    function getSnapPoint(targetX, targetY) {
+      const level = mapDoc.levels[activeFloor];
+      let nearest = null;
+      let minD = 16 / zoom;
+
+      for (const w of [...level.walls, ...(level.windows || [])]) {
+        for (const pt of [{x: w.x1, y: w.y1}, {x: w.x2, y: w.y2}]) {
+          const d = Math.hypot(pt.x - targetX, pt.y - targetY);
+          if (d < minD) { minD = d; nearest = { x: pt.x, y: pt.y }; }
+        }
+      }
+
+      if (level.doors) {
+        for (const d of level.doors) {
+          const dist = Math.hypot(d.x - targetX, d.y - targetY);
+          if (dist < minD) { minD = dist; nearest = { x: d.x, y: d.y }; }
+        }
+      }
+
+      const gx = Math.round(targetX / cfg.TILE_SIZE) * cfg.TILE_SIZE;
+      const gy = Math.round(targetY / cfg.TILE_SIZE) * cfg.TILE_SIZE;
+      if (Math.hypot(gx - targetX, gy - targetY) < minD) nearest = { x: gx, y: gy };
+
+      return nearest || { x: targetX, y: targetY };
+    }
+
+    function resolveStairTarget(floor, direction) {
+      if (direction === 'up') {
+        if (floor === 'floor1') return 'floor2';
+        if (floor === 'floor2') return 'roof';
+        return null;
+      } else {
+        if (floor === 'roof') return 'floor2';
+        if (floor === 'floor2') return 'floor1';
+        return null;
+      }
+    }
+
+    function updateStairTargetLabel() {
+      const target = resolveStairTarget(activeFloor, stairDirection);
+      const info = document.getElementById('stair-target-info');
+      if (target) {
+        info.style.color = stairDirection === 'up' ? '#58a6ff' : '#e3b341';
+        info.innerText = `Target: ${target.toUpperCase()}`;
+      } else {
+        info.style.color = '#f85149';
+        info.innerText = `Illegal Direction for ${activeFloor.toUpperCase()}`;
+      }
+    }
+
+    window.addEventListener('contextmenu', e => e.preventDefault());
+
+    canvas.addEventListener('mousedown', e => {
+      if (e.button === 2 || e.button === 1) {
+        isPanning = true;
+        lastMouse = { x: e.clientX, y: e.clientY };
+        return;
+      }
+      if (e.button === 0) {
+        isMouseDown = true;
+        const world = screenToWorld(e.clientX, e.clientY);
+        const col = Math.floor(world.x / cfg.TILE_SIZE);
+        const row = Math.floor(world.y / cfg.TILE_SIZE);
+
+        if (activeTool === 'boxfill') {
+          window.Game.BoxFill.start(col, row);
+        } else {
+          applyTool(e);
+        }
+      }
+    });
+
+    window.addEventListener('mouseup', e => {
+      if (e.button === 2 || e.button === 1) isPanning = false;
+      if (e.button === 0) {
+        isMouseDown = false;
+        if (activeTool === 'boxfill' && window.Game.BoxFill.isBoxDragging) {
+          const level = mapDoc.levels[activeFloor];
+          const color = document.getElementById('tile-color').value;
+          const maxCols = mapDoc.cols || cfg.MAP_COLS;
+          const maxRows = mapDoc.rows || cfg.MAP_ROWS;
+          window.Game.BoxFill.apply(level, paintType, color, maxCols, maxRows);
+        }
+      }
+    });
+
+    canvas.addEventListener('mousemove', e => {
+      if (isPanning) {
+        panX += e.clientX - lastMouse.x;
+        panY += e.clientY - lastMouse.y;
+        lastMouse = { x: e.clientX, y: e.clientY };
+        return;
+      }
+
+      currentMouseWorld = screenToWorld(e.clientX, e.clientY);
+      const col = Math.floor(currentMouseWorld.x / cfg.TILE_SIZE);
+      const row = Math.floor(currentMouseWorld.y / cfg.TILE_SIZE);
+
+      if (activeTool === 'boxfill' && window.Game.BoxFill.isBoxDragging) {
+        window.Game.BoxFill.update(col, row);
+      } else if (isMouseDown && (activeTool === 'paint' || activeTool === 'zone' || activeTool === 'erase')) {
+        applyTool(e);
+      }
+    });
+
+    canvas.addEventListener('wheel', e => {
+      e.preventDefault();
+      const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
+      const mouse = { x: e.clientX, y: e.clientY };
+      const worldBefore = screenToWorld(mouse.x, mouse.y);
+      zoom = Math.min(Math.max(zoom * zoomFactor, 0.25), 3.0);
+      document.getElementById('lbl-zoom').innerText = `${Math.round(zoom * 100)}%`;
+      panX = mouse.x - worldBefore.x * zoom;
+      panY = mouse.y - worldBefore.y * zoom;
+    });
+
+    window.addEventListener('keydown', e => {
+      if (e.key === 'r' || e.key === 'R') {
+        toolRotation = (toolRotation + 90) % 360;
+      }
+    });
+
+    function applyTool(e) {
+      const world = screenToWorld(e.clientX, e.clientY);
+      const col = Math.floor(world.x / cfg.TILE_SIZE);
+      const row = Math.floor(world.y / cfg.TILE_SIZE);
+      const key = `${col},${row}`;
+      const level = mapDoc.levels[activeFloor];
+      const maxCols = mapDoc.cols || cfg.MAP_COLS;
+      const maxRows = mapDoc.rows || cfg.MAP_ROWS;
+
+      if (col < 0 || col >= maxCols || row < 0 || row >= maxRows) return;
+
+      if (activeTool === 'paint') {
+        const color = document.getElementById('tile-color').value;
+        if (paintType === 'floor') {
+          level.floors[key] = color;
+          delete level.solids[key];
+        } else {
+          level.solids[key] = color;
+          delete level.floors[key];
+        }
+      } else if (activeTool === 'zone') {
+        mapDoc.buildingZones[key] = parseInt(document.getElementById('zone-id').value) || 1;
+      } else if (activeTool === 'wall') {
+        const len = parseInt(document.getElementById('wall-length').value);
+        const start = getSnapPoint(world.x, world.y);
+        const rad = (toolRotation * Math.PI) / 180;
+        const end = getSnapPoint(start.x + Math.cos(rad) * len, start.y + Math.sin(rad) * len);
+
+        level.walls.push({
+          x1: start.x, y1: start.y, x2: end.x, y2: end.y,
+          color: document.getElementById('wall-color').value,
+          thickness: 6
+        });
+      } else if (activeTool === 'window') {
+        const len = parseInt(document.getElementById('window-length').value);
+        const start = getSnapPoint(world.x, world.y);
+        const rad = (toolRotation * Math.PI) / 180;
+        const end = getSnapPoint(start.x + Math.cos(rad) * len, start.y + Math.sin(rad) * len);
+
+        if (!level.windows) level.windows = [];
+        level.windows.push({
+          x1: start.x, y1: start.y, x2: end.x, y2: end.y,
+          thickness: 5
+        });
+      } else if (activeTool === 'door') {
+        const width = parseInt(document.getElementById('door-width').value);
+        const start = getSnapPoint(world.x, world.y);
+
+        level.doors.push({
+          x: Math.round(start.x),
+          y: Math.round(start.y),
+          width: width,
+          rotation: toolRotation,
+          isOpen: false
+        });
+      } else if (activeTool === 'stairs') {
+        const target = resolveStairTarget(activeFloor, stairDirection);
+        if (!target) return;
+
+        level.stairs.push({
+          col: col,
+          row: row,
+          length: parseInt(document.getElementById('stairs-length').value),
+          rotation: toolRotation,
+          direction: stairDirection,
+          targetFloor: target
+        });
+      } else if (activeTool === 'chest') {
+        if (!level.chests) level.chests = [];
+        level.chests.push({
+          x: Math.round(world.x),
+          y: Math.round(world.y)
+        });
+      } else if (activeTool === 'kiosk') {
+        if (!level.kiosks) level.kiosks = [];
+        level.kiosks.push({
+          x: Math.round(world.x),
+          y: Math.round(world.y)
+        });
+      } else if (activeTool === 'spawn') {
+        if (!level.spawns) level.spawns = [];
+        level.spawns.push({
+          x: Math.round(world.x),
+          y: Math.round(world.y)
+        });
+      } else if (activeTool === 'erase') {
+        delete level.floors[key];
+        delete level.solids[key];
+        delete mapDoc.buildingZones[key];
+
+        level.walls = level.walls.filter(w => Math.hypot((w.x1 + w.x2) / 2 - world.x, (w.y1 + w.y2) / 2 - world.y) > 20);
+        if (level.windows) level.windows = level.windows.filter(w => Math.hypot((w.x1 + w.x2) / 2 - world.x, (w.y1 + w.y2) / 2 - world.y) > 20);
+        if (level.chests) level.chests = level.chests.filter(c => Math.hypot(c.x - world.x, c.y - world.y) > 20);
+        if (level.kiosks) level.kiosks = level.kiosks.filter(k => Math.hypot(k.x - world.x, k.y - world.y) > 24);
+        if (level.spawns) level.spawns = level.spawns.filter(s => Math.hypot(s.x - world.x, s.y - world.y) > 22);
+        level.doors = level.doors.filter(d => Math.hypot(d.x - world.x, d.y - world.y) > 24);
+        level.stairs = level.stairs.filter(s => !(s.col === col && s.row === row));
+      }
+    }
+
+    const floorBtns = { floor1: document.getElementById('flr-1'), floor2: document.getElementById('flr-2'), roof: document.getElementById('flr-roof') };
+    Object.entries(floorBtns).forEach(([floorKey, btn]) => {
+      btn.onclick = () => {
+        Object.values(floorBtns).forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        activeFloor = floorKey;
+        updateStairTargetLabel();
+      };
+    });
+
+    const toolBtns = {
+      paint: document.getElementById('tool-paint'),
+      boxfill: document.getElementById('tool-boxfill'),
+      wall: document.getElementById('tool-wall'),
+      window: document.getElementById('tool-window'),
+      door: document.getElementById('tool-door'),
+      stairs: document.getElementById('tool-stairs'),
+      chest: document.getElementById('tool-chest'),
+      kiosk: document.getElementById('tool-kiosk'),
+      spawn: document.getElementById('tool-spawn'),
+      zone: document.getElementById('tool-zone'),
+      erase: document.getElementById('tool-erase')
+    };
+
+    const subPanels = {
+      paint: document.getElementById('sub-tile'),
+      boxfill: document.getElementById('sub-tile'),
+      wall: document.getElementById('sub-wall'),
+      window: document.getElementById('sub-window'),
+      door: document.getElementById('sub-door'),
+      stairs: document.getElementById('sub-stairs'),
+      chest: document.getElementById('sub-chest'),
+      kiosk: document.getElementById('sub-kiosk'),
+      spawn: document.getElementById('sub-spawn'),
+      zone: document.getElementById('sub-zone')
+    };
+
+    Object.entries(toolBtns).forEach(([toolKey, btn]) => {
+      btn.onclick = () => {
+        Object.values(toolBtns).forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        activeTool = toolKey;
+
+        Object.values(subPanels).forEach(p => (p.style.display = 'none'));
+        if (subPanels[toolKey]) subPanels[toolKey].style.display = 'block';
+
+        const hint = document.getElementById('boxfill-hint');
+        if (hint) hint.style.display = (toolKey === 'boxfill') ? 'block' : 'none';
+
+        if (toolKey === 'stairs') updateStairTargetLabel();
+      };
+    });
+
+    const btnStairUp = document.getElementById('stair-dir-up');
+    const btnStairDown = document.getElementById('stair-dir-down');
+    btnStairUp.onclick = () => {
+      stairDirection = 'up';
+      btnStairUp.classList.add('active');
+      btnStairDown.classList.remove('active');
+      updateStairTargetLabel();
+    };
+    btnStairDown.onclick = () => {
+      stairDirection = 'down';
+      btnStairDown.classList.add('active');
+      btnStairUp.classList.remove('active');
+      updateStairTargetLabel();
+    };
+
+    document.getElementById('tile-type-floor').onclick = function() {
+      paintType = 'floor';
+      this.classList.add('active');
+      document.getElementById('tile-type-solid').classList.remove('active');
+    };
+    document.getElementById('tile-type-solid').onclick = function() {
+      paintType = 'solid';
+      this.classList.add('active');
+      document.getElementById('tile-type-floor').classList.remove('active');
+    };
+
+    document.getElementById('wall-length').oninput = e => document.getElementById('lbl-wall-length').innerText = `${e.target.value}px`;
+    document.getElementById('window-length').oninput = e => document.getElementById('lbl-window-length').innerText = `${e.target.value}px`;
+    document.getElementById('door-width').oninput = e => document.getElementById('lbl-door-width').innerText = `${e.target.value}px`;
+    document.getElementById('stairs-length').oninput = e => document.getElementById('lbl-stairs-length').innerText = `${e.target.value} Tiles`;
+
+    const toast = document.getElementById('status-toast');
+    document.getElementById('btn-save-to-game').onclick = () => {
+      applyMapSize();
+      localStorage.setItem(cfg.STORAGE_KEY, JSON.stringify(mapDoc));
+      toast.style.display = 'block';
+      setTimeout(() => { toast.style.display = 'none'; }, 2000);
+    };
+
+    document.getElementById('btn-open-game').onclick = () => { window.location.href = 'index.html'; };
+
+    document.getElementById('btn-clear').onclick = () => {
+      if (confirm(`Reset all on ${activeFloor.toUpperCase()}?`)) {
+        mapDoc.levels[activeFloor] = { floors: {}, solids: {}, walls: [], doors: [], windows: [], stairs: [], chests: [], kiosks: [], spawns: [] };
+      }
+    };
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.save();
+      ctx.translate(panX, panY);
+      ctx.scale(zoom, zoom);
+
+      const maxCols = mapDoc.cols || cfg.MAP_COLS;
+      const maxRows = mapDoc.rows || cfg.MAP_ROWS;
+      const mapWidth = maxCols * cfg.TILE_SIZE;
+      const mapHeight = maxRows * cfg.TILE_SIZE;
+
+      ctx.fillStyle = '#0f121a';
+      ctx.fillRect(0, 0, mapWidth, mapHeight);
+
+      // Grid Lines
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+      ctx.lineWidth = 1;
+      for (let x = 0; x <= mapWidth; x += cfg.TILE_SIZE) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, mapHeight); ctx.stroke();
+      }
+      for (let y = 0; y <= mapHeight; y += cfg.TILE_SIZE) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(mapWidth, y); ctx.stroke();
+      }
+
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(0, 0, mapWidth, mapHeight);
+
+      // Building Zones
+      for (const [key, zoneId] of Object.entries(mapDoc.buildingZones)) {
+        const [c, r] = key.split(',').map(Number);
+        if (c < maxCols && r < maxRows) {
+          ctx.fillStyle = `hsla(${(zoneId * 65) % 360}, 60%, 50%, 0.18)`;
+          ctx.fillRect(c * cfg.TILE_SIZE, r * cfg.TILE_SIZE, cfg.TILE_SIZE, cfg.TILE_SIZE);
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+          ctx.font = '10px monospace';
+          ctx.fillText(`Z${zoneId}`, c * cfg.TILE_SIZE + 4, r * cfg.TILE_SIZE + 14);
+        }
+      }
+
+      const level = mapDoc.levels[activeFloor];
+
+      // Floors
+      for (const [key, color] of Object.entries(level.floors)) {
+        const [c, r] = key.split(',').map(Number);
+        if (c < maxCols && r < maxRows) {
+          ctx.fillStyle = color;
+          ctx.fillRect(c * cfg.TILE_SIZE, r * cfg.TILE_SIZE, cfg.TILE_SIZE, cfg.TILE_SIZE);
+        }
+      }
+
+      // Solids
+      for (const [key, color] of Object.entries(level.solids)) {
+        const [c, r] = key.split(',').map(Number);
+        if (c < maxCols && r < maxRows) {
+          ctx.fillStyle = color;
+          ctx.fillRect(c * cfg.TILE_SIZE, r * cfg.TILE_SIZE, cfg.TILE_SIZE, cfg.TILE_SIZE);
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+          ctx.strokeRect(c * cfg.TILE_SIZE, r * cfg.TILE_SIZE, cfg.TILE_SIZE, cfg.TILE_SIZE);
+        }
+      }
+
+      // Stairs
+      for (const st of level.stairs) {
+        ctx.save();
+        const sx = st.col * cfg.TILE_SIZE + cfg.TILE_SIZE / 2;
+        const sy = st.row * cfg.TILE_SIZE + cfg.TILE_SIZE / 2;
+        ctx.translate(sx, sy);
+        ctx.rotate((st.rotation * Math.PI) / 180);
+
+        const isDown = st.direction === 'down';
+        ctx.fillStyle = isDown ? '#2a1e16' : '#182433';
+        const w = cfg.TILE_SIZE - 4;
+        const h = st.length * cfg.TILE_SIZE - 4;
+        ctx.fillRect(-w / 2, -h / 2, w, h);
+
+        ctx.strokeStyle = isDown ? '#7d4a22' : '#3d5675';
+        ctx.lineWidth = 2;
+        const steps = st.length * 4;
+        for (let i = 0; i <= steps; i++) {
+          const stepY = -h / 2 + (i * h) / steps;
+          ctx.beginPath(); ctx.moveTo(-w / 2, stepY); ctx.lineTo(w / 2, stepY); ctx.stroke();
+        }
+
+        ctx.fillStyle = isDown ? '#e3b341' : '#58a6ff';
+        ctx.beginPath();
+        if (isDown) {
+          ctx.moveTo(0, h / 2 - 6); ctx.lineTo(-6, h / 2 - 16); ctx.lineTo(6, h / 2 - 16);
+        } else {
+          ctx.moveTo(0, -h / 2 + 6); ctx.lineTo(-6, -h / 2 + 16); ctx.lineTo(6, -h / 2 + 16);
+        }
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Thin Walls
+      for (const w of level.walls) {
+        ctx.strokeStyle = w.color;
+        ctx.lineWidth = w.thickness;
+        ctx.beginPath(); ctx.moveTo(w.x1, w.y1); ctx.lineTo(w.x2, w.y2); ctx.stroke();
+      }
+
+      // Windows
+      if (level.windows) {
+        for (const win of level.windows) {
+          ctx.strokeStyle = '#38bdf8';
+          ctx.lineWidth = win.thickness;
+          ctx.beginPath(); ctx.moveTo(win.x1, win.y1); ctx.lineTo(win.x2, win.y2); ctx.stroke();
+        }
+      }
+
+      // Doors
+      for (const d of level.doors) {
+        ctx.save();
+        ctx.translate(d.x, d.y);
+        ctx.rotate((d.rotation * Math.PI) / 180);
+
+        ctx.strokeStyle = '#d29922';
+        ctx.lineWidth = 5;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(d.width, 0);
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(0, 0, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Supply Chests
+      if (level.chests) {
+        for (const ch of level.chests) {
+          ctx.save();
+          ctx.translate(ch.x, ch.y);
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(-18, -12, 36, 24);
+          ctx.strokeStyle = '#f59e0b';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(-18, -12, 36, 24);
+          ctx.fillStyle = '#f59e0b';
+          ctx.fillRect(-3, -3, 6, 6);
+          ctx.restore();
+        }
+      }
+
+      // Buy Station Kiosks ($)
+      if (level.kiosks) {
+        for (const k of level.kiosks) {
+          ctx.save();
+          ctx.translate(k.x, k.y);
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(-22, -15, 44, 30);
+          ctx.strokeStyle = '#15803d';
+          ctx.lineWidth = 2.5;
+          ctx.strokeRect(-22, -15, 44, 30);
+          ctx.fillStyle = 'rgba(34, 197, 94, 0.45)';
+          ctx.fillRect(-18, -11, 36, 22);
+
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 15px monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('$', 0, 1);
+          ctx.restore();
+        }
+      }
+
+      // Spawn Points
+      if (level.spawns) {
+        for (const sp of level.spawns) {
+          ctx.save();
+          ctx.translate(sp.x, sp.y);
+
+          ctx.strokeStyle = '#06b6d4';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(0, 0, 16, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.fillStyle = 'rgba(6, 182, 212, 0.25)';
+          ctx.beginPath();
+          ctx.arc(0, 0, 16, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = '#38bdf8';
+          ctx.beginPath();
+          ctx.arc(0, 0, 4, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.font = 'bold 9px monospace';
+          ctx.fillStyle = '#e0f2fe';
+          ctx.textAlign = 'center';
+          ctx.fillText('SPAWN', 0, 26);
+          ctx.restore();
+        }
+      }
+
+      // --- LIVE PREVIEWS ---
+      if (activeTool === 'boxfill') {
+        const color = document.getElementById('tile-color').value;
+        window.Game.BoxFill.drawPreview(ctx, cfg.TILE_SIZE, maxCols, maxRows, color);
+      } else if (activeTool === 'wall' || activeTool === 'window') {
+        const isWin = activeTool === 'window';
+        const len = parseInt(document.getElementById(isWin ? 'window-length' : 'wall-length').value);
+        const start = getSnapPoint(currentMouseWorld.x, currentMouseWorld.y);
+        const rad = (toolRotation * Math.PI) / 180;
+        const end = getSnapPoint(start.x + Math.cos(rad) * len, start.y + Math.sin(rad) * len);
+
+        ctx.strokeStyle = isWin ? '#38bdf8' : 'rgba(255, 255, 255, 0.6)';
+        ctx.lineWidth = isWin ? 5 : 6;
+        ctx.setLineDash([6, 6]);
+        ctx.beginPath(); ctx.moveTo(start.x, start.y); ctx.lineTo(end.x, end.y); ctx.stroke();
+        ctx.setLineDash([]);
+      } else if (activeTool === 'door') {
+        const width = parseInt(document.getElementById('door-width').value);
+        const start = getSnapPoint(currentMouseWorld.x, currentMouseWorld.y);
+
+        ctx.save();
+        ctx.translate(start.x, start.y);
+        ctx.rotate((toolRotation * Math.PI) / 180);
+
+        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = 4;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(width, 0);
+        ctx.stroke();
+
+        ctx.strokeStyle = 'rgba(251, 191, 36, 0.25)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.arc(0, 0, width, 0, Math.PI / 2);
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(0, 0, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      } else if (activeTool === 'chest') {
+        ctx.save();
+        ctx.translate(currentMouseWorld.x, currentMouseWorld.y);
+        ctx.strokeStyle = 'rgba(245, 158, 11, 0.7)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.strokeRect(-18, -12, 36, 24);
+        ctx.restore();
+      } else if (activeTool === 'kiosk') {
+        ctx.save();
+        ctx.translate(currentMouseWorld.x, currentMouseWorld.y);
+        ctx.strokeStyle = 'rgba(34, 197, 94, 0.8)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.strokeRect(-22, -15, 44, 30);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 14px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('$', 0, 0);
+        ctx.restore();
+      } else if (activeTool === 'spawn') {
+        ctx.save();
+        ctx.translate(currentMouseWorld.x, currentMouseWorld.y);
+        ctx.strokeStyle = 'rgba(6, 182, 212, 0.8)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.arc(0, 0, 16, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = '#06b6d4';
+        ctx.beginPath();
+        ctx.arc(0, 0, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      ctx.restore();
+      requestAnimationFrame(draw);
+    }
+    requestAnimationFrame(draw);
+  </script>
+</body>
+</html>

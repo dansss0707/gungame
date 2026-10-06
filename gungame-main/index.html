@@ -1,0 +1,1835 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Resurgence FFA - Playable Arena</title>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+      user-select: none;
+    }
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #06080d;
+      color: #e2e8f0;
+    }
+    #gameCanvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      cursor: crosshair;
+    }
+
+    /* DEATH & REDEPLOY OVERLAY */
+    #death-overlay {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at center, rgba(185, 28, 28, 0.45) 0%, rgba(6, 8, 13, 0.96) 80%);
+      display: none;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 16px;
+      z-index: 600;
+      backdrop-filter: blur(14px);
+    }
+    .death-banner {
+      font-size: 44px;
+      font-weight: 900;
+      letter-spacing: 0.15em;
+      color: #ef4444;
+      text-transform: uppercase;
+      text-shadow: 0 0 25px rgba(239, 68, 68, 0.85);
+      animation: pulseDeath 1.5s infinite alternate;
+    }
+    .redeploy-status-box {
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid #334155;
+      padding: 24px 38px;
+      border-radius: 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
+    }
+    .redeploy-timer {
+      font-size: 56px;
+      font-weight: 900;
+      color: #38bdf8;
+      font-variant-numeric: tabular-nums;
+    }
+    .redeploy-desc {
+      font-size: 13px;
+      font-weight: 700;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .btn-leave-match {
+      background: #334155;
+      color: #e2e8f0;
+      border: 1px solid #475569;
+      font-weight: 800;
+      padding: 10px 24px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: background 0.15s;
+    }
+    .btn-leave-match:hover {
+      background: #475569;
+    }
+    @keyframes pulseDeath {
+      from { transform: scale(0.98); opacity: 0.9; }
+      to { transform: scale(1.02); opacity: 1; }
+    }
+
+    /* MAIN MENU / LOBBY OVERLAY */
+    #menu-overlay {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at center, rgba(15, 23, 42, 0.94) 0%, rgba(6, 8, 13, 0.99) 100%);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 500;
+      backdrop-filter: blur(12px);
+    }
+    .menu-card {
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      box-shadow: 0 0 50px rgba(56, 189, 248, 0.15);
+      width: 460px;
+      max-height: 85vh;
+      padding: 32px;
+      border-radius: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .menu-title {
+      font-size: 26px;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+      color: #38bdf8;
+      text-align: center;
+      text-transform: uppercase;
+    }
+    .menu-sub {
+      font-size: 11px;
+      color: #94a3b8;
+      text-align: center;
+      margin-top: -8px;
+      letter-spacing: 0.05em;
+    }
+    .menu-input {
+      width: 100%;
+      background: #0f172a;
+      border: 1px solid #334155;
+      padding: 10px 14px;
+      border-radius: 6px;
+      color: #f8fafc;
+      font-size: 14px;
+      font-weight: 600;
+      outline: none;
+      transition: border 0.15s;
+    }
+    .menu-input:focus {
+      border-color: #38bdf8;
+    }
+    .menu-btn {
+      width: 100%;
+      padding: 12px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 800;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .menu-btn-primary {
+      background: #0284c7;
+      color: #fff;
+    }
+    .menu-btn-primary:hover {
+      background: #0369a1;
+      transform: translateY(-1px);
+    }
+    .menu-btn-secondary {
+      background: #1e293b;
+      color: #e2e8f0;
+      border: 1px solid #334155;
+    }
+    .menu-btn-secondary:hover {
+      background: #334155;
+    }
+    .room-code-badge {
+      font-size: 28px;
+      font-weight: 900;
+      letter-spacing: 0.2em;
+      text-align: center;
+      color: #facc15;
+      background: #0f172a;
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px dashed #ca8a04;
+      user-select: text;
+    }
+    .lobby-player-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #1e293b;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    #lobby-player-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+
+    /* TOP-RIGHT RADAR */
+    #minimap-container {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      width: 170px;
+      height: 170px;
+      border-radius: 50%;
+      background: rgba(15, 23, 42, 0.95);
+      border: 2px solid rgba(56, 189, 248, 0.4);
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(10px);
+      z-index: 10;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    #minimapCanvas {
+      width: 170px;
+      height: 170px;
+      display: block;
+    }
+
+    /* MATCH TIMER */
+    #top-center-hud {
+      position: absolute;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: rgba(15, 23, 42, 0.88);
+      border: 1px solid rgba(51, 65, 85, 0.8);
+      backdrop-filter: blur(10px);
+      padding: 6px 24px;
+      border-radius: 8px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+      pointer-events: none;
+      z-index: 10;
+    }
+    #match-phase {
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      color: #38bdf8;
+      text-transform: uppercase;
+      margin-bottom: 2px;
+    }
+    #match-timer {
+      font-size: 24px;
+      font-weight: 900;
+      letter-spacing: 0.05em;
+      color: #38bdf8;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* TOP LEFT STATUS */
+    #top-left-hud {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .hud-chip {
+      background: rgba(15, 23, 42, 0.82);
+      border: 1px solid rgba(51, 65, 85, 0.7);
+      backdrop-filter: blur(8px);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* HEALTH & ARMOR */
+    #bottom-left-hud {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      width: 280px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .status-panel {
+      background: rgba(15, 23, 42, 0.88);
+      border: 1px solid rgba(51, 65, 85, 0.8);
+      backdrop-filter: blur(10px);
+      border-radius: 8px;
+      padding: 12px 14px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+    .bar-label-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+    }
+    .armor-plates-container {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 4px;
+      height: 8px;
+      margin-bottom: 10px;
+    }
+    .armor-plate-slot {
+      background: rgba(30, 41, 59, 0.8);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .armor-plate-fill {
+      height: 100%;
+      width: 0%;
+      background: #38bdf8;
+      box-shadow: 0 0 8px #0284c7;
+      transition: width 0.15s ease-out;
+    }
+    .hp-container {
+      width: 100%;
+      height: 12px;
+      background: rgba(30, 41, 59, 0.8);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .hp-fill {
+      height: 100%;
+      width: 100%;
+      background: #22c55e;
+      box-shadow: 0 0 8px #15803d;
+      transition: width 0.15s ease-out;
+    }
+    .economy-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 8px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    /* INVENTORY SLOTS */
+    #inventory-bar {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      pointer-events: all;
+      z-index: 10;
+    }
+    .slot-box {
+      width: 74px;
+      height: 74px;
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid rgba(51, 65, 85, 0.8);
+      backdrop-filter: blur(10px);
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 6px;
+      position: relative;
+      transition: all 0.15s ease;
+      cursor: grab;
+    }
+    .slot-box:active {
+      cursor: grabbing;
+    }
+    .slot-box.active {
+      border-color: #38bdf8;
+      box-shadow: 0 0 16px rgba(56, 189, 248, 0.35);
+      transform: translateY(-4px);
+    }
+    .slot-num {
+      font-size: 10px;
+      font-weight: 800;
+      color: #64748b;
+    }
+    .slot-box.active .slot-num {
+      color: #38bdf8;
+    }
+    .slot-content {
+      font-size: 11px;
+      font-weight: 700;
+      text-align: center;
+      line-height: 1.2;
+    }
+    .slot-subtext {
+      font-size: 9px;
+      color: #94a3b8;
+      text-align: center;
+    }
+
+    /* WEAPON AMMO READOUT */
+    #bottom-right-hud {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .action-status {
+      font-size: 12px;
+      font-weight: 800;
+      color: #facc15;
+      text-transform: uppercase;
+      background: rgba(15, 23, 42, 0.9);
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1px solid #eab308;
+      display: none;
+    }
+    .ammo-card {
+      background: rgba(15, 23, 42, 0.92);
+      border: 1px solid rgba(51, 65, 85, 0.8);
+      backdrop-filter: blur(10px);
+      border-radius: 8px;
+      padding: 10px 16px;
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+
+    /* NOTIFICATION FEED */
+    #pickup-feed {
+      position: absolute;
+      right: 20px;
+      bottom: 100px;
+      display: flex;
+      flex-direction: column-reverse;
+      gap: 6px;
+      pointer-events: none;
+      z-index: 20;
+    }
+    .pickup-feed-item {
+      background: rgba(15, 23, 42, 0.9);
+      border-left: 3px solid #38bdf8;
+      padding: 6px 14px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #f1f5f9;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+      animation: slideIn 0.2s ease-out forwards;
+      backdrop-filter: blur(6px);
+    }
+    .pickup-feed-item.fade-out {
+      opacity: 0;
+      transform: translateX(12px);
+      transition: all 0.35s ease-in;
+    }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateX(18px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    #cursor-tooltip {
+      position: absolute;
+      pointer-events: none;
+      transform: translate(14px, -36px);
+      background: rgba(15, 23, 42, 0.94);
+      border: 1px solid #38bdf8;
+      box-shadow: 0 0 12px rgba(56, 189, 248, 0.4);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+      display: none;
+      z-index: 100;
+      color: #fff;
+    }
+
+    #interact-hint {
+      position: absolute;
+      bottom: 110px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.92);
+      border: 1px solid #22c55e;
+      padding: 6px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 700;
+      display: none;
+      pointer-events: none;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- DEATH & RESURGENCE REDEPLOY MODAL -->
+  <div id="death-overlay">
+    <div class="death-banner">YOU DIED</div>
+    <div class="redeploy-status-box">
+      <div id="lbl-redeploy-title" class="redeploy-desc">RESURGENCE REDEPLOYING IN</div>
+      <div id="lbl-redeploy-timer" class="redeploy-timer">10</div>
+      <div id="lbl-redeploy-detail" style="font-size:12px; color:#facc15; font-weight:700;">Squad Resurgence Active</div>
+      <button id="btn-forfeit" class="btn-leave-match" style="display:none;">Return to Menu</button>
+    </div>
+  </div>
+
+  <!-- MAIN MENU / LOBBY OVERLAY -->
+  <div id="menu-overlay">
+    <div id="screen-main" class="menu-card">
+      <div class="menu-title">RESURGENCE</div>
+      <div class="menu-sub">P2P TACTICAL BATTLE ROYALE</div>
+
+      <input type="text" id="inp-player-name" class="menu-input" placeholder="Operator Call-Sign" maxlength="14" value="Ghost">
+
+      <button id="btn-host-match" class="menu-btn menu-btn-primary">Host New Match</button>
+
+      <div style="display:flex; align-items:center; gap:8px;">
+        <input type="text" id="inp-room-code" class="menu-input" placeholder="ROOM CODE" style="text-transform:uppercase;">
+        <button id="btn-join-match" class="menu-btn menu-btn-secondary" style="width:140px;">Join</button>
+      </div>
+
+      <button id="btn-play-solo" class="menu-btn menu-btn-secondary" style="font-size:12px; opacity:0.8;">Play Solo / Sandbox</button>
+    </div>
+
+    <div id="screen-lobby" class="menu-card" style="display:none;">
+      <div class="menu-title">WAR ROOM</div>
+      <div class="menu-sub">SHARE ROOM CODE WITH SQUADMATES</div>
+
+      <div id="lbl-lobby-code" class="room-code-badge">-----</div>
+
+      <div style="margin-top:6px; font-size:11px; color:#94a3b8; font-weight:700;">OPERATORS IN LOBBY (<span id="lbl-player-count">1</span>):</div>
+      <div id="lobby-player-list"></div>
+
+      <button id="btn-start-game" class="menu-btn menu-btn-primary" style="margin-top:10px;">Deploy Match</button>
+    </div>
+  </div>
+
+  <!-- TOP CENTER CLOCK -->
+  <div id="top-center-hud">
+    <div id="match-phase">RESURGENCE ACTIVE</div>
+    <div id="match-timer">06:00</div>
+  </div>
+
+  <!-- RADAR MINIMAP -->
+  <div id="minimap-container">
+    <canvas id="minimapCanvas" width="170" height="170"></canvas>
+  </div>
+
+  <div id="cursor-tooltip">[F] Pick up</div>
+  <div id="pickup-feed"></div>
+
+  <!-- PLAYER HUD -->
+  <div id="top-left-hud">
+    <div class="hud-chip">
+      <span style="color:#64748b;">ELEVATION:</span>
+      <span id="lbl-floor" style="color:#38bdf8;">FLOOR 1</span>
+    </div>
+    <div class="hud-chip">
+      <span style="color:#64748b;">LOCATION:</span>
+      <span id="lbl-zone">OUTSIDE</span>
+    </div>
+  </div>
+
+  <div id="bottom-left-hud">
+    <div class="status-panel">
+      <div class="bar-label-row">
+        <span style="color:#38bdf8;">Armor Plates</span>
+        <span id="lbl-armor-val" style="color:#38bdf8;">0 / 150</span>
+      </div>
+      <div class="armor-plates-container">
+        <div class="armor-plate-slot"><div id="plate-1" class="armor-plate-fill"></div></div>
+        <div class="armor-plate-slot"><div id="plate-2" class="armor-plate-fill"></div></div>
+        <div class="armor-plate-slot"><div id="plate-3" class="armor-plate-fill"></div></div>
+      </div>
+
+      <div class="bar-label-row">
+        <span style="color:#22c55e;">Health</span>
+        <span id="lbl-hp-val" style="color:#22c55e;">100</span>
+      </div>
+      <div class="hp-container">
+        <div id="hp-bar" class="hp-fill"></div>
+      </div>
+
+      <div class="economy-row">
+        <div style="color:#4ade80;">$ <span id="lbl-cash">0</span></div>
+        <div style="color:#facc15;">REVIVE: <span id="lbl-tokens">0</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="inventory-bar">
+    <div id="slot-0" class="slot-box active"><div class="slot-num">[1]</div><div id="slot-0-name" class="slot-content">EMPTY</div><div id="slot-0-sub" class="slot-subtext">-</div></div>
+    <div id="slot-1" class="slot-box"><div class="slot-num">[2]</div><div id="slot-1-name" class="slot-content">EMPTY</div><div id="slot-1-sub" class="slot-subtext">-</div></div>
+    <div id="slot-2" class="slot-box"><div class="slot-num">[3]</div><div id="slot-2-name" class="slot-content">EMPTY</div><div id="slot-2-sub" class="slot-subtext">-</div></div>
+    <div id="slot-3" class="slot-box"><div class="slot-num">[4]</div><div id="slot-3-name" class="slot-content">EMPTY</div><div id="slot-3-sub" class="slot-subtext">-</div></div>
+    <div id="slot-4" class="slot-box"><div class="slot-num">[5]</div><div id="slot-4-name" class="slot-content">EMPTY</div><div id="slot-4-sub" class="slot-subtext">-</div></div>
+  </div>
+
+  <div id="bottom-right-hud">
+    <div id="lbl-action" class="action-status">RELOADING...</div>
+    <div id="ammo-panel" class="ammo-card">
+      <div id="lbl-mag" style="font-size:28px; font-weight:900;">-</div>
+      <div style="color:#64748b; font-size:16px;">/</div>
+      <div id="lbl-reserve" style="font-size:13px; font-weight:700; color:#94a3b8;">-</div>
+    </div>
+  </div>
+
+  <div id="interact-hint">Press [E]</div>
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- Modular Scripts -->
+  <script src="src/common.js"></script>
+  <script src="src/camera.js"></script>
+  <script src="src/physics.js"></script>
+  <script src="src/vision.js"></script>
+  <script src="src/bullet.js"></script>
+  <script src="src/inventory.js"></script>
+  <script src="src/loot.js"></script>
+  <script src="src/minimap.js"></script>
+  <script src="src/network.js"></script>
+  <script src="src/player.js"></script>
+  <script src="src/ui.js"></script>
+  <script src="src/map.js"></script>
+
+  <script>
+    // ============================================================
+    // BROWSER ANTI-THROTTLE AUDIO CLOCK
+    // ============================================================
+    let audioKeepAliveCtx = null;
+    function enableAntiThrottleAudio() {
+      if (!audioKeepAliveCtx) {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (AudioCtx) {
+          audioKeepAliveCtx = new AudioCtx();
+          const osc = audioKeepAliveCtx.createOscillator();
+          const gain = audioKeepAliveCtx.createGain();
+          gain.gain.value = 0.00001; // Inaudible
+          osc.connect(gain);
+          gain.connect(audioKeepAliveCtx.destination);
+          osc.start();
+        }
+      }
+    }
+    window.addEventListener('click', enableAntiThrottleAudio, { once: true });
+    window.addEventListener('keydown', enableAntiThrottleAudio, { once: true });
+
+    async function initGame() {
+      const canvas = document.getElementById('gameCanvas');
+      const ctx = canvas.getContext('2d');
+      const cfg = window.Game.CONFIG;
+
+      const mapData = await window.Game.loadMapData();
+      window.Game.MapRenderer.initDoors(mapData);
+
+      const camera = new window.Game.Camera(window.innerWidth, window.innerHeight);
+      const minimap = new window.Game.Minimap('minimapCanvas');
+
+      const allSpawns = [];
+      ['floor1', 'floor2', 'roof'].forEach(flr => {
+        const level = mapData.levels[flr];
+        if (level && level.spawns) {
+          level.spawns.forEach(s => allSpawns.push({ x: s.x, y: s.y, floor: flr }));
+        }
+      });
+
+      let startX = 150, startY = 150, startFloor = 'floor1';
+      if (allSpawns.length > 0) {
+        const chosen = allSpawns[Math.floor(Math.random() * allSpawns.length)];
+        startX = chosen.x;
+        startY = chosen.y;
+        startFloor = chosen.floor;
+      }
+
+      const player = new window.Game.Player(startX, startY);
+      player.currentFloor = startFloor;
+      player.armorHp = 0;
+
+      // ============================================================
+      // ABSOLUTE HARDWARE WALL-CLOCK TIMING
+      // ============================================================
+      const MATCH_DURATION = 360; // 6 minutes
+      let matchTargetEndTime = null; 
+      let hostTimeOffset = 0;
+
+      function getSyncedNow() {
+        return Date.now() + hostTimeOffset;
+      }
+
+      function getMatchSecondsRemaining() {
+        if (!matchTargetEndTime) return MATCH_DURATION;
+        return Math.max(0, (matchTargetEndTime - getSyncedNow()) / 1000);
+      }
+
+      const bullets = [];
+      let groundItems = [];
+      const activeChests = [];
+      const remotePlayers = {};
+      const damagePops = [];
+      let isMultiplayerActive = false;
+      let localPlayerName = 'Ghost';
+
+      ['floor1', 'floor2', 'roof'].forEach(flr => {
+        const level = mapData.levels[flr];
+        if (level && level.chests) {
+          level.chests.forEach((c, idx) => {
+            activeChests.push(new window.Game.Chest(c.x, c.y, flr, `${flr}_chest_${idx}`));
+          });
+        }
+      });
+
+      let isLocalDead = false;
+      let localTargetRespawnTime = 0; 
+      let shootCooldown = 0;
+      const deathOverlay = document.getElementById('death-overlay');
+      const lblRedeployTitle = document.getElementById('lbl-redeploy-title');
+      const lblRedeployTimer = document.getElementById('lbl-redeploy-timer');
+      const lblRedeployDetail = document.getElementById('lbl-redeploy-detail');
+      const btnForfeit = document.getElementById('btn-forfeit');
+
+      btnForfeit.onclick = () => location.reload();
+
+      function dropPlayerLoot(pX, pY, pFloor, inv, isLocal = true) {
+        const droppedItems = [];
+
+        if (inv && inv.slots) {
+          inv.slots.forEach(slot => {
+            if (slot && slot.item) {
+              droppedItems.push({
+                type: slot.item.type,
+                name: slot.item.name,
+                color: slot.item.color,
+                count: slot.count || 1,
+                weaponData: slot.item.type === 'weapon' ? slot.item : undefined,
+                consumableData: slot.item.type === 'consumable' ? slot.item : undefined
+              });
+            }
+          });
+          if (isLocal) {
+            inv.slots = [null, null, null, null, null];
+            inv.activeSlotIndex = 0;
+          }
+        }
+
+        if (inv && inv.cash > 0) {
+          const dropCash = Math.floor(inv.cash * 0.5);
+          if (dropCash > 0) {
+            droppedItems.push({
+              type: 'cash',
+              name: 'Cash Roll',
+              value: dropCash,
+              color: '#4ade80'
+            });
+            if (isLocal) inv.cash -= dropCash;
+          }
+        }
+
+        const netDrops = [];
+        droppedItems.forEach((it, idx) => {
+          const angle = (idx / (droppedItems.length || 1)) * Math.PI * 2 + (Math.random() * 0.4 - 0.2);
+          const dist = 28 + Math.random() * 20;
+          const dx = pX + Math.cos(angle) * dist;
+          const dy = pY + Math.sin(angle) * dist;
+
+          const groundItem = new window.Game.GroundItem(dx, dy, pFloor, it);
+          groundItems.push(groundItem);
+
+          netDrops.push({
+            id: groundItem.id,
+            x: dx,
+            y: dy,
+            floor: pFloor,
+            item: it
+          });
+        });
+
+        if (isLocal && isMultiplayerActive && netDrops.length > 0) {
+          window.Game.Network.sendAction('spawn_dropped_loot', { drops: netDrops });
+        }
+      }
+
+      function triggerPlayerDeath() {
+        if (isLocalDead) return;
+        isLocalDead = true;
+        player.isDead = true;
+
+        dropPlayerLoot(player.x, player.y, player.currentFloor, player.inventory, true);
+        deathOverlay.style.display = 'flex';
+
+        const matchRemaining = getMatchSecondsRemaining();
+
+        if (matchRemaining > 120) {
+          localTargetRespawnTime = getSyncedNow() + 10000;
+          lblRedeployTitle.textContent = "RESURGENCE REDEPLOYING IN";
+          lblRedeployTimer.textContent = "10";
+          lblRedeployTimer.style.fontSize = "56px";
+          lblRedeployTimer.style.color = "#38bdf8";
+          lblRedeployDetail.textContent = "RESURGENCE WINDOW: ACTIVE (FREE)";
+          lblRedeployDetail.style.color = '#38bdf8';
+          btnForfeit.style.display = 'none';
+        } else {
+          if (player.inventory.respawnTokens > 0) {
+            player.inventory.respawnTokens -= 1;
+            window.Game.UI.addPickupFeed("Revive Token Consumed!", "#facc15");
+            localTargetRespawnTime = getSyncedNow() + 10000;
+            lblRedeployTitle.textContent = "REVIVE TOKEN REDEPLOY IN";
+            lblRedeployTimer.textContent = "10";
+            lblRedeployTimer.style.fontSize = "56px";
+            lblRedeployTimer.style.color = "#facc15";
+            lblRedeployDetail.textContent = `TOKEN USED! (${player.inventory.respawnTokens} REMAINING)`;
+            lblRedeployDetail.style.color = '#facc15';
+            btnForfeit.style.display = 'none';
+          } else {
+            localTargetRespawnTime = 0;
+            lblRedeployTitle.textContent = "RESURGENCE CLOSED - ELIMINATED";
+            lblRedeployTimer.textContent = "DEFEAT";
+            lblRedeployTimer.style.fontSize = "36px";
+            lblRedeployTimer.style.color = "#ef4444";
+            lblRedeployDetail.textContent = "NO REVIVE TOKENS REMAINING";
+            lblRedeployDetail.style.color = "#ef4444";
+            btnForfeit.style.display = 'block';
+          }
+        }
+      }
+
+      function executeRedeploy() {
+        if (!isLocalDead) return;
+        isLocalDead = false;
+        player.isDead = false;
+        player.hp = 100;
+        player.armorHp = 50;
+        localTargetRespawnTime = 0;
+
+        if (allSpawns.length > 0) {
+          const sp = allSpawns[Math.floor(Math.random() * allSpawns.length)];
+          player.x = sp.x;
+          player.y = sp.y;
+          player.currentFloor = sp.floor;
+        }
+
+        deathOverlay.style.display = 'none';
+        window.Game.UI.addPickupFeed("Redeployed to Arena!", "#22c55e");
+
+        if (isMultiplayerActive) {
+          window.Game.Network.sendAction('player_revived', {
+            id: window.Game.Network.myId || 'local_player',
+            x: player.x,
+            y: player.y,
+            floor: player.currentFloor
+          });
+        }
+      }
+
+      function toggleDoorById(doorId, forceState = null) {
+        for (const flr of ['floor1', 'floor2', 'roof']) {
+          const level = mapData.levels[flr];
+          if (level && level.doors) {
+            const d = level.doors.find(item => item.id === doorId);
+            if (d) {
+              d.isOpen = forceState !== null ? forceState : !d.isOpen;
+              return d.isOpen;
+            }
+          }
+        }
+        return false;
+      }
+
+      function removeGroundItemById(itemId) {
+        const idx = groundItems.findIndex(i => i.id === itemId);
+        if (idx !== -1) groundItems.splice(idx, 1);
+      }
+
+      function spawnDamagePop(x, y, damage, isShield) {
+        damagePops.push({
+          x: x + (Math.random() * 12 - 6),
+          y: y - 10,
+          text: Math.round(damage).toString(),
+          color: isShield ? '#38bdf8' : '#ef4444',
+          alpha: 1.0,
+          vy: -40
+        });
+      }
+
+      function attemptFireWeapon() {
+        if (shootCooldown > 0 || isLocalDead) return;
+        const active = player.inventory.getActiveSlot();
+        if (!active || !active.item || active.item.type !== 'weapon') return;
+
+        if (player.inventory.isReloading) return;
+
+        if (active.currentMag <= 0) {
+          player.inventory.startReload();
+          return;
+        }
+
+        const wep = active.item;
+        active.currentMag -= 1;
+        shootCooldown = 1 / (wep.fireRate || 5);
+
+        const muzzleDist = player.radius + 6;
+        const muzzleX = player.x + Math.cos(player.angle) * muzzleDist;
+        const muzzleY = player.y + Math.sin(player.angle) * muzzleDist;
+        const pelletCount = wep.pellets || 1;
+
+        for (let p = 0; p < pelletCount; p++) {
+          const spreadOffset = (Math.random() - 0.5) * (wep.spread || 0.03);
+          const finalAngle = player.angle + spreadOffset;
+          const bulletId = `b_${Date.now()}_${Math.random()}`;
+
+          const b = new window.Game.Bullet(
+            muzzleX, muzzleY, finalAngle, player.currentFloor,
+            wep.damage, wep.speed || 850, window.Game.Network.myId || 'local_player', bulletId
+          );
+          bullets.push(b);
+
+          if (isMultiplayerActive) {
+            window.Game.Network.sendAction('shoot', {
+              id: bulletId,
+              x: muzzleX,
+              y: muzzleY,
+              angle: finalAngle,
+              floor: player.currentFloor,
+              damage: wep.damage,
+              speed: wep.speed || 850,
+              shooterId: window.Game.Network.myId || 'local_player'
+            });
+          }
+        }
+      }
+
+      // ==========================================
+      // NETWORK COMMUNICATION
+      // ==========================================
+      window.Game.Network.onActionReceive = (sender, action, payload) => {
+        if (action === 'ping_sync') {
+          if (window.Game.Network.isHost) {
+            window.Game.Network.sendAction('pong_sync', {
+              clientT0: payload.clientT0,
+              hostT1: Date.now()
+            });
+          }
+        }
+        else if (action === 'pong_sync') {
+          const clientT2 = Date.now();
+          const rtt = clientT2 - payload.clientT0;
+          hostTimeOffset = (payload.hostT1 + (rtt / 2)) - clientT2;
+        }
+        else if (action === 'shoot') {
+          bullets.push(new window.Game.Bullet(
+            payload.x, payload.y, payload.angle, payload.floor, payload.damage, payload.speed, payload.shooterId, payload.id
+          ));
+        } 
+        else if (action === 'match_start') {
+          if (window.Game.Network.onMatchStart) window.Game.Network.onMatchStart(payload);
+        }
+        else if (action === 'door_toggle') {
+          toggleDoorById(payload.doorId, payload.isOpen);
+          if (window.Game.Network.isHost) {
+            window.Game.Network.sendAction('door_toggle', payload);
+          }
+        }
+        else if (action === 'request_open_chest') {
+          if (window.Game.Network.isHost) {
+            const chest = activeChests.find(c => c.id === payload.chestId);
+            if (chest && !chest.isOpen) {
+              const rawDrops = chest.generateLootDrops();
+              const drops = rawDrops.map(d => ({
+                ...d,
+                id: `loot_${Date.now()}_${Math.floor(Math.random() * 10000)}`
+              }));
+              chest.openWithItems(drops, item => groundItems.push(item), mapData);
+              window.Game.Network.sendAction('chest_opened', { chestId: chest.id, drops });
+            }
+          }
+        }
+        else if (action === 'chest_opened') {
+          const chest = activeChests.find(c => c.id === payload.chestId);
+          if (chest && !chest.isOpen) {
+            chest.openWithItems(payload.drops, item => groundItems.push(item), mapData);
+          }
+        }
+        else if (action === 'item_pickup_request') {
+          if (window.Game.Network.isHost) {
+            removeGroundItemById(payload.itemId);
+            window.Game.Network.sendAction('item_despawn', { itemId: payload.itemId });
+          }
+        }
+        else if (action === 'item_despawn') {
+          removeGroundItemById(payload.itemId);
+        }
+        else if (action === 'spawn_dropped_loot') {
+          if (payload && payload.drops) {
+            payload.drops.forEach(d => {
+              if (!groundItems.some(existing => existing.id === d.id)) {
+                groundItems.push(new window.Game.GroundItem(d.x, d.y, d.floor, d.item, d.id));
+              }
+            });
+          }
+        }
+        else if (action === 'player_damaged') {
+          spawnDamagePop(payload.x, payload.y, payload.amount, payload.isShield);
+          const myId = window.Game.Network.myId || 'local_player';
+
+          if (payload.targetId === myId) {
+            player.takeDamage(payload.amount);
+            if (player.isDead) {
+              window.Game.UI.addPickupFeed(`Eliminated by ${payload.attackerName || 'Enemy'}!`, '#ef4444');
+              triggerPlayerDeath();
+            }
+          } else if (remotePlayers[payload.targetId]) {
+            const rp = remotePlayers[payload.targetId];
+            rp.takeDamage(payload.amount);
+            if (rp.isDead) {
+              window.Game.UI.addPickupFeed(`${rp.name} was eliminated!`, '#facc15');
+            }
+          }
+        }
+        else if (action === 'player_revived') {
+          if (remotePlayers[payload.id]) {
+            const rp = remotePlayers[payload.id];
+            rp.isDead = false;
+            rp.hp = 100;
+            rp.armorHp = 50;
+            rp.x = payload.x;
+            rp.y = payload.y;
+            rp.currentFloor = payload.floor;
+            rp.targetRespawnTime = 0;
+            window.Game.UI.addPickupFeed(`${rp.name} redeployed!`, '#38bdf8');
+          }
+        }
+      };
+
+      window.Game.Network.onStateUpdate = (sender, data) => {
+        if (window.Game.Network.isHost) {
+          if (remotePlayers[sender]) {
+            remotePlayers[sender].applySnapshot(data);
+            if (data.targetRespawnTime !== undefined) {
+              remotePlayers[sender].targetRespawnTime = data.targetRespawnTime;
+            }
+          }
+        } else {
+          if (data.matchTargetEndTime) {
+            matchTargetEndTime = data.matchTargetEndTime;
+          }
+
+          if (data.players) {
+            for (const id in data.players) {
+              if (id === window.Game.Network.myId) continue;
+              if (!remotePlayers[id]) {
+                remotePlayers[id] = new window.Game.RemotePlayer(id, data.players[id].name);
+              }
+              remotePlayers[id].applySnapshot(data.players[id]);
+              remotePlayers[id].targetRespawnTime = data.players[id].targetRespawnTime || 0;
+            }
+          }
+
+          if (data.doors) {
+            for (const [doorId, isOpen] of Object.entries(data.doors)) {
+              toggleDoorById(doorId, isOpen);
+            }
+          }
+          if (data.openedChests) {
+            data.openedChests.forEach(cid => {
+              const ch = activeChests.find(c => c.id === cid);
+              if (ch) ch.isOpen = true;
+            });
+          }
+        }
+      };
+
+      // ============================================================
+      // INDEPENDENT CONTINUOUS TICKER (Runs every 50ms)
+      // ============================================================
+      setInterval(() => {
+        const syncedNow = getSyncedNow();
+        const myId = window.Game.Network.myId || 'local_player';
+
+        if (matchTargetEndTime) {
+          const sec = Math.max(0, (matchTargetEndTime - syncedNow) / 1000);
+          const mins = Math.floor(sec / 60);
+          const secs = Math.floor(sec % 60);
+          const timerEl = document.getElementById('match-timer');
+          if (timerEl) {
+            timerEl.textContent = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+          }
+
+          const phaseEl = document.getElementById('match-phase');
+          if (phaseEl) {
+            if (sec > 120) {
+              phaseEl.textContent = "RESURGENCE ACTIVE";
+              phaseEl.style.color = "#38bdf8";
+            } else {
+              phaseEl.textContent = "RESURGENCE CLOSED";
+              phaseEl.style.color = "#f43f5e";
+            }
+          }
+        }
+
+        if (isLocalDead && localTargetRespawnTime > 0) {
+          const respawnDiff = Math.max(0, (localTargetRespawnTime - syncedNow) / 1000);
+          lblRedeployTimer.textContent = Math.ceil(respawnDiff).toString();
+          if (respawnDiff <= 0) {
+            executeRedeploy();
+          }
+        }
+
+        if (isMultiplayerActive) {
+          if (window.Game.Network.isHost) {
+            const playerSnapshots = {};
+            playerSnapshots[myId] = {
+              name: localPlayerName,
+              x: player.x,
+              y: player.y,
+              angle: player.angle,
+              floor: player.currentFloor,
+              hp: player.hp,
+              armorHp: player.armorHp,
+              isDead: isLocalDead,
+              targetRespawnTime: localTargetRespawnTime
+            };
+
+            for (const id in remotePlayers) {
+              const rp = remotePlayers[id];
+              playerSnapshots[id] = {
+                name: rp.name,
+                x: rp.x,
+                y: rp.y,
+                angle: rp.angle,
+                floor: rp.currentFloor,
+                hp: rp.hp,
+                armorHp: rp.armorHp,
+                isDead: rp.isDead,
+                targetRespawnTime: rp.targetRespawnTime || 0
+              };
+            }
+
+            const doorStates = {};
+            ['floor1', 'floor2', 'roof'].forEach(flr => {
+              const lvl = mapData.levels[flr];
+              if (lvl && lvl.doors) lvl.doors.forEach(d => doorStates[d.id] = d.isOpen);
+            });
+
+            const openedChests = activeChests.filter(c => c.isOpen).map(c => c.id);
+
+            window.Game.Network.broadcastSnapshot({
+              matchTargetEndTime: matchTargetEndTime,
+              players: playerSnapshots,
+              doors: doorStates,
+              openedChests: openedChests
+            });
+          } else {
+            window.Game.Network.sendClientInput({
+              x: player.x,
+              y: player.y,
+              angle: player.angle,
+              floor: player.currentFloor,
+              hp: player.hp,
+              armorHp: player.armorHp,
+              isDead: isLocalDead,
+              targetRespawnTime: localTargetRespawnTime
+            });
+          }
+        }
+      }, 50);
+
+      setInterval(() => {
+        if (isMultiplayerActive && !window.Game.Network.isHost) {
+          window.Game.Network.sendAction('ping_sync', { clientT0: Date.now() });
+        }
+      }, 3000);
+
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+          lastTime = performance.now();
+          if (isLocalDead && localTargetRespawnTime > 0 && getSyncedNow() >= localTargetRespawnTime) {
+            executeRedeploy();
+          }
+          if (isMultiplayerActive && !window.Game.Network.isHost) {
+            window.Game.Network.sendAction('ping_sync', { clientT0: Date.now() });
+          }
+        }
+      });
+
+      // ==========================================
+      // LOBBY & AUTHORITATIVE SPAWNS
+      // ==========================================
+      const menuOverlay = document.getElementById('menu-overlay');
+      const screenMain = document.getElementById('screen-main');
+      const screenLobby = document.getElementById('screen-lobby');
+      const inpName = document.getElementById('inp-player-name');
+      const inpCode = document.getElementById('inp-room-code');
+      const lblCode = document.getElementById('lbl-lobby-code');
+      const playerListEl = document.getElementById('lobby-player-list');
+      const playerCountEl = document.getElementById('lbl-player-count');
+      const btnStartGame = document.getElementById('btn-start-game');
+
+      function updateLobbyUI() {
+        playerListEl.innerHTML = '';
+        const all = [{ name: localPlayerName + ' (You)', isHost: window.Game.Network.isHost }];
+        for (const id in remotePlayers) {
+          all.push({ name: remotePlayers[id].name, isHost: false });
+        }
+        playerCountEl.textContent = all.length;
+        all.forEach(p => {
+          const row = document.createElement('div');
+          row.className = 'lobby-player-row';
+          row.innerHTML = `<span>${p.name}</span><span style="color:#38bdf8; font-size:10px;">${p.isHost ? 'HOST' : 'READY'}</span>`;
+          playerListEl.appendChild(row);
+        });
+      }
+
+      function assignSpawns(playerIds) {
+        const assignments = {};
+        if (allSpawns.length === 0) {
+          playerIds.forEach(id => {
+            assignments[id] = { x: 150, y: 150, floor: 'floor1' };
+          });
+          return assignments;
+        }
+
+        playerIds.forEach((id, index) => {
+          const spIdx = index % allSpawns.length;
+          const cycle = Math.floor(index / allSpawns.length);
+          const sp = allSpawns[spIdx];
+
+          const angle = cycle * 1.35;
+          const radius = cycle * 28;
+
+          assignments[id] = {
+            x: sp.x + Math.cos(angle) * radius,
+            y: sp.y + Math.sin(angle) * radius,
+            floor: sp.floor
+          };
+        });
+
+        return assignments;
+      }
+
+      document.getElementById('btn-host-match').onclick = () => {
+        enableAntiThrottleAudio();
+        localPlayerName = inpName.value.trim() || 'Host';
+        screenMain.style.display = 'none';
+        screenLobby.style.display = 'flex';
+        btnStartGame.style.display = 'block';
+
+        window.Game.Network.initHost(localPlayerName, (code) => {
+          lblCode.textContent = code;
+          isMultiplayerActive = true;
+          hostTimeOffset = 0;
+          updateLobbyUI();
+        });
+      };
+
+      document.getElementById('btn-join-match').onclick = () => {
+        enableAntiThrottleAudio();
+        const code = inpCode.value.trim();
+        if (!code) return;
+        localPlayerName = inpName.value.trim() || 'Guest';
+
+        screenMain.style.display = 'none';
+        screenLobby.style.display = 'flex';
+        lblCode.textContent = code.toUpperCase();
+        btnStartGame.style.display = 'none';
+
+        window.Game.Network.initClient(localPlayerName, code, () => {
+          isMultiplayerActive = true;
+          window.Game.Network.sendAction('ping_sync', { clientT0: Date.now() });
+          updateLobbyUI();
+        }, (err) => {
+          alert("Failed to join room: " + err.message);
+          screenLobby.style.display = 'none';
+          screenMain.style.display = 'flex';
+        });
+      };
+
+      document.getElementById('btn-play-solo').onclick = () => {
+        enableAntiThrottleAudio();
+        menuOverlay.style.display = 'none';
+        matchTargetEndTime = Date.now() + (MATCH_DURATION * 1000);
+        
+        // Spawn floor loot for solo
+        if (window.Game.generateLooseFloorLoot) {
+          const naturalDrops = window.Game.generateLooseFloorLoot(mapData, 20);
+          groundItems.push(...naturalDrops);
+        }
+      };
+
+      btnStartGame.onclick = () => {
+        enableAntiThrottleAudio();
+        const allIds = [window.Game.Network.myId, ...Object.keys(remotePlayers)];
+        const spawnMap = assignSpawns(allIds);
+
+        const mySpawn = spawnMap[window.Game.Network.myId];
+        if (mySpawn) {
+          player.x = mySpawn.x;
+          player.y = mySpawn.y;
+          player.currentFloor = mySpawn.floor;
+        }
+
+        matchTargetEndTime = Date.now() + (MATCH_DURATION * 1000);
+
+        // Host authoritative floor loot spawn
+        let naturalNetDrops = [];
+        if (window.Game.generateLooseFloorLoot) {
+          const naturalDrops = window.Game.generateLooseFloorLoot(mapData, 20);
+          groundItems.push(...naturalDrops);
+          naturalNetDrops = naturalDrops.map(g => ({
+            id: g.id,
+            x: g.x,
+            y: g.y,
+            floor: g.floor,
+            item: g.item
+          }));
+        }
+
+        window.Game.Network.sendAction('match_start', {
+          matchTargetEndTime: matchTargetEndTime,
+          spawns: spawnMap,
+          initialLoot: naturalNetDrops
+        });
+
+        menuOverlay.style.display = 'none';
+        window.Game.UI.addPickupFeed("Match Deployed!", "#22c55e");
+      };
+
+      window.Game.Network.onPlayerJoin = (peerId, name) => {
+        remotePlayers[peerId] = new window.Game.RemotePlayer(peerId, name);
+        window.Game.UI.addPickupFeed(`${name} connected!`, '#38bdf8');
+        updateLobbyUI();
+      };
+
+      window.Game.Network.onPlayerLeave = (peerId) => {
+        if (remotePlayers[peerId]) {
+          window.Game.UI.addPickupFeed(`${remotePlayers[peerId].name} disconnected`, '#ef4444');
+          delete remotePlayers[peerId];
+          updateLobbyUI();
+        }
+      };
+
+      window.Game.Network.onMatchStart = (payload) => {
+        menuOverlay.style.display = 'none';
+        if (payload && payload.matchTargetEndTime) {
+          matchTargetEndTime = payload.matchTargetEndTime;
+        }
+        if (payload && payload.spawns && window.Game.Network.myId) {
+          const mySpawn = payload.spawns[window.Game.Network.myId];
+          if (mySpawn) {
+            player.x = mySpawn.x;
+            player.y = mySpawn.y;
+            player.currentFloor = mySpawn.floor;
+          }
+        }
+        // Client receives authoritative floor loot from host
+        if (payload && payload.initialLoot) {
+          payload.initialLoot.forEach(d => {
+            if (!groundItems.some(existing => existing.id === d.id)) {
+              groundItems.push(new window.Game.GroundItem(d.x, d.y, d.floor, d.item, d.id));
+            }
+          });
+        }
+        window.Game.UI.addPickupFeed("Match Deployed!", "#22c55e");
+      };
+
+      const keys = {};
+      const mouseScreen = { x: 0, y: 0 };
+      let hoveredGroundItem = null;
+
+      function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        camera.resize(canvas.width, canvas.height);
+      }
+      window.addEventListener('resize', resize);
+      resize();
+
+      window.addEventListener('contextmenu', e => e.preventDefault());
+
+      window.addEventListener('keydown', e => {
+        if (isLocalDead) return;
+
+        keys[e.code] = true;
+        keys[e.key] = true;
+
+        if (e.code.startsWith('Digit')) {
+          const slotNum = parseInt(e.code.replace('Digit', ''));
+          if (slotNum >= 1 && slotNum <= 5) player.inventory.switchSlot(slotNum - 1);
+        }
+
+        if (e.code === 'KeyR') player.inventory.startReload();
+
+        if (e.code === 'KeyF') {
+          if (hoveredGroundItem) {
+            const itemData = hoveredGroundItem.item;
+            const itemId = hoveredGroundItem.id;
+            const inv = player.inventory;
+            const activeIdx = inv.activeSlotIndex;
+            const currentSlot = inv.slots[activeIdx];
+
+            if (isMultiplayerActive) {
+              window.Game.Network.sendAction(window.Game.Network.isHost ? 'item_despawn' : 'item_pickup_request', { itemId });
+            }
+            removeGroundItemById(itemId);
+            hoveredGroundItem = null;
+
+            if (itemData.type === 'consumable') {
+              const existingStack = inv.slots.find(s => s && s.item && s.item.name === itemData.name);
+              if (existingStack) {
+                existingStack.count += (itemData.count || 1);
+                window.Game.UI.addPickupFeed(`Added +${itemData.count || 1} ${itemData.name}`, itemData.color);
+                return;
+              }
+            }
+
+            if (!currentSlot) {
+              inv.slots[activeIdx] = {
+                item: itemData.weaponData || itemData.consumableData,
+                currentMag: itemData.weaponData ? itemData.weaponData.magSize : undefined,
+                reserveAmmo: itemData.weaponData ? (itemData.weaponData.reserveAmmo || 60) : undefined,
+                count: itemData.count || 1
+              };
+              window.Game.UI.addPickupFeed(`Picked up ${itemData.name}`, itemData.color);
+              return;
+            }
+
+            const emptySlotIdx = inv.getFirstEmptySlotIndex();
+            if (emptySlotIdx !== -1) {
+              inv.slots[emptySlotIdx] = {
+                item: itemData.weaponData || itemData.consumableData,
+                currentMag: itemData.weaponData ? itemData.weaponData.magSize : undefined,
+                reserveAmmo: itemData.weaponData ? (itemData.weaponData.reserveAmmo || 60) : undefined,
+                count: itemData.count || 1
+              };
+              window.Game.UI.addPickupFeed(`Picked up ${itemData.name}`, itemData.color);
+              return;
+            }
+
+            const oldSlot = { ...currentSlot };
+            inv.slots[activeIdx] = {
+              item: itemData.weaponData || itemData.consumableData,
+              currentMag: itemData.weaponData ? itemData.weaponData.magSize : undefined,
+              reserveAmmo: itemData.weaponData ? (itemData.weaponData.reserveAmmo || 60) : undefined,
+              count: itemData.count || 1
+            };
+            window.Game.UI.addPickupFeed(`Swapped for ${itemData.name}`, itemData.color);
+
+            groundItems.push(new window.Game.GroundItem(player.x, player.y, player.currentFloor, {
+              type: oldSlot.item.type,
+              name: oldSlot.item.name,
+              color: oldSlot.item.color,
+              count: oldSlot.count,
+              weaponData: oldSlot.item.type === 'weapon' ? oldSlot.item : undefined,
+              consumableData: oldSlot.item.type === 'consumable' ? oldSlot.item : undefined
+            }));
+          }
+        }
+
+        if (e.code === 'KeyE') {
+          // Chests
+          for (const ch of activeChests) {
+            if (ch.floor === player.currentFloor && !ch.isOpen && Math.hypot(ch.x - player.x, ch.y - player.y) < 75) {
+              const rawDrops = ch.generateLootDrops();
+              const drops = rawDrops.map(d => ({
+                ...d,
+                id: `loot_${Date.now()}_${Math.floor(Math.random() * 10000)}`
+              }));
+
+              ch.openWithItems(drops, item => groundItems.push(item), mapData);
+
+              if (isMultiplayerActive) {
+                if (window.Game.Network.isHost) {
+                  window.Game.Network.sendAction('chest_opened', { chestId: ch.id, drops });
+                } else {
+                  window.Game.Network.sendAction('request_open_chest', { chestId: ch.id });
+                }
+              }
+              return;
+            }
+          }
+
+          // Doors
+          const level = mapData.levels[player.currentFloor];
+          if (level && level.doors) {
+            for (const d of level.doors) {
+              const hDist = Math.hypot(d.hingeX - player.x, d.hingeY - player.y);
+              const mDist = d.x !== undefined ? Math.hypot(d.x - player.x, d.y - player.y) : 999;
+              if (hDist < 80 || mDist < 80) {
+                const newIsOpen = !d.isOpen;
+                d.isOpen = newIsOpen;
+                if (isMultiplayerActive) {
+                  window.Game.Network.sendAction('door_toggle', { doorId: d.id, isOpen: newIsOpen });
+                }
+                break;
+              }
+            }
+          }
+        }
+      });
+
+      window.addEventListener('keyup', e => {
+        keys[e.code] = false;
+        keys[e.key] = false;
+      });
+
+      window.addEventListener('wheel', e => {
+        if (isLocalDead) return;
+        let idx = player.inventory.activeSlotIndex;
+        if (e.deltaY > 0) idx = (idx + 1) % 5;
+        else if (e.deltaY < 0) idx = (idx + 4) % 5;
+        player.inventory.switchSlot(idx);
+      });
+
+      window.addEventListener('mousemove', e => {
+        mouseScreen.x = e.clientX;
+        mouseScreen.y = e.clientY;
+        const tooltip = window.Game.UI.elements.cursorTooltip;
+        if (tooltip) {
+          tooltip.style.left = `${e.clientX}px`;
+          tooltip.style.top = `${e.clientY}px`;
+        }
+      });
+
+      window.addEventListener('mousedown', e => {
+        if (isLocalDead) return;
+        if (e.button === 0) keys['mouseLeft'] = true;
+        else if (e.button === 2) keys['mouseRight'] = true;
+      });
+
+      window.addEventListener('mouseup', e => {
+        if (e.button === 0) keys['mouseLeft'] = false;
+        else if (e.button === 2) keys['mouseRight'] = false;
+      });
+
+      window.addEventListener('blur', () => {
+        keys['mouseLeft'] = false;
+        keys['mouseRight'] = false;
+      });
+
+      let lastTime = performance.now();
+
+      // ==========================================
+      // VISUAL RENDER PIPELINE
+      // ==========================================
+      function gameLoop(now) {
+        const dt = Math.min((now - lastTime) / 1000, 0.1);
+        lastTime = now;
+
+        const myId = window.Game.Network.myId || 'local_player';
+
+        if (shootCooldown > 0) shootCooldown -= dt;
+
+        if (keys['mouseLeft'] && !isLocalDead && menuOverlay.style.display === 'none') {
+          attemptFireWeapon();
+        }
+
+        const syncedNow = getSyncedNow();
+        const matchTimeRemaining = getMatchSecondsRemaining();
+
+        for (const id in remotePlayers) remotePlayers[id].update(dt);
+
+        window.Game.MapRenderer.updateDoors(dt, mapData);
+        for (const ch of activeChests) ch.update(dt);
+        for (const item of groundItems) item.update(dt);
+
+        // Ground pickups
+        if (!isLocalDead) {
+          for (let i = groundItems.length - 1; i >= 0; i--) {
+            const item = groundItems[i];
+            if (item.floor === player.currentFloor) {
+              const dist = Math.hypot(item.x - player.x, item.y - player.y);
+              if (dist < player.radius + item.radius + 10) {
+                let collected = false;
+                if (item.item.type === 'cash') {
+                  player.inventory.cash += item.item.value;
+                  window.Game.UI.addPickupFeed(`+$${item.item.value} Cash`, '#4ade80');
+                  collected = true;
+                } else if (item.item.type === 'token') {
+                  player.inventory.respawnTokens += item.item.value;
+                  window.Game.UI.addPickupFeed(`+${item.item.value} Revive Token!`, '#facc15');
+                  collected = true;
+                } else if (item.item.type === 'ammo') {
+                  const active = player.inventory.getActiveSlot();
+                  if (active && active.item && active.item.type === 'weapon') active.reserveAmmo += item.item.value;
+                  else {
+                    const wepSlot = player.inventory.slots.find(s => s && s.item && s.item.type === 'weapon');
+                    if (wepSlot) wepSlot.reserveAmmo += item.item.value;
+                  }
+                  window.Game.UI.addPickupFeed(`+${item.item.value} Ammo`, '#fbbf24');
+                  collected = true;
+                }
+
+                if (collected) {
+                  if (isMultiplayerActive) {
+                    window.Game.Network.sendAction(window.Game.Network.isHost ? 'item_despawn' : 'item_pickup_request', { itemId: item.id });
+                  }
+                  groundItems.splice(i, 1);
+                }
+              }
+            }
+          }
+        }
+
+        const mouseWorld = camera.screenToWorld(mouseScreen.x, mouseScreen.y);
+        camera.update(dt, player.isAiming, player.x, player.y, mouseWorld);
+
+        if (!isLocalDead && menuOverlay.style.display === 'none') {
+          player.update(dt, keys, mouseWorld, mapData, b => bullets.push(b));
+        }
+
+        // Bullets
+        for (let i = bullets.length - 1; i >= 0; i--) {
+          const b = bullets[i];
+          b.update(dt, mapData);
+
+          if (!b.isDead) {
+            for (const pid in remotePlayers) {
+              const rp = remotePlayers[pid];
+              if (!rp.isDead && rp.currentFloor === b.floor && b.shooterId !== rp.id) {
+                if (Math.hypot(b.x - rp.x, b.y - rp.y) < rp.radius + b.radius) {
+                  b.isDead = true;
+                  const result = rp.takeDamage(b.damage);
+                  spawnDamagePop(rp.x, rp.y, b.damage, result.armorLost > 0);
+
+                  if (window.Game.Network && window.Game.Network.sendAction) {
+                    window.Game.Network.sendAction('player_damaged', {
+                      targetId: rp.id,
+                      amount: b.damage,
+                      x: rp.x,
+                      y: rp.y,
+                      isShield: result.armorLost > 0,
+                      attackerName: localPlayerName
+                    });
+                  }
+
+                  if (rp.isDead) {
+                    dropPlayerLoot(rp.x, rp.y, rp.currentFloor, { slots: [], cash: 200 }, false);
+                  }
+                  break;
+                }
+              }
+            }
+
+            if (!b.isDead && !player.isDead && !isLocalDead && player.currentFloor === b.floor && b.shooterId !== myId) {
+              if (Math.hypot(b.x - player.x, b.y - player.y) < player.radius + b.radius) {
+                b.isDead = true;
+                const result = player.takeDamage(b.damage);
+                spawnDamagePop(player.x, player.y, b.damage, result.armorLost > 0);
+
+                if (window.Game.Network && window.Game.Network.sendAction) {
+                  window.Game.Network.sendAction('player_damaged', {
+                    targetId: myId,
+                    amount: b.damage,
+                    x: player.x,
+                    y: player.y,
+                    isShield: result.armorLost > 0,
+                    attackerName: 'Opponent'
+                  });
+                }
+
+                if (player.isDead) {
+                  triggerPlayerDeath();
+                }
+              }
+            }
+          }
+
+          if (b.isDead) bullets.splice(i, 1);
+        }
+
+        for (let i = damagePops.length - 1; i >= 0; i--) {
+          const p = damagePops[i];
+          p.y += p.vy * dt;
+          p.alpha -= dt * 1.8;
+          if (p.alpha <= 0) damagePops.splice(i, 1);
+        }
+
+        hoveredGroundItem = null;
+        if (!isLocalDead) {
+          for (const item of groundItems) {
+            if (item.floor === player.currentFloor) {
+              if (item.item.type === 'cash' || item.item.type === 'ammo' || item.item.type === 'token') continue;
+              const distToMouse = Math.hypot(item.x - mouseWorld.x, item.y - mouseWorld.y);
+              const distToPlayer = Math.hypot(item.x - player.x, item.y - player.y);
+              if (distToMouse < 24 && distToPlayer < 90) {
+                hoveredGroundItem = item;
+                break;
+              }
+            }
+          }
+        }
+
+        // Fallback directly to DOM if window.Game.UI.elements isn't initialized yet
+        const tooltip = (window.Game.UI && window.Game.UI.elements && window.Game.UI.elements.cursorTooltip)
+          || document.getElementById('cursor-tooltip');
+
+        if (tooltip) {
+          if (hoveredGroundItem) {
+            const inv = player.inventory;
+            const action = (inv && inv.isFull && inv.isFull()) ? 'Swap for' : 'Pick up';
+            tooltip.textContent = `[F] ${action} ${hoveredGroundItem.item.name}`;
+            tooltip.style.display = 'block';
+          } else {
+            tooltip.style.display = 'none';
+          }
+        }
+
+        const hintElem = (window.Game.UI && window.Game.UI.elements && window.Game.UI.elements.hintElem)
+          || document.getElementById('interact-hint');
+        let hintText = null;
+
+        if (!isLocalDead) {
+          for (const ch of activeChests) {
+            if (ch.floor === player.currentFloor && !ch.isOpen && Math.hypot(ch.x - player.x, ch.y - player.y) < 70) {
+              hintText = "Press [E] to Open Supply Crate";
+              break;
+            }
+          }
+
+          if (!hintText) {
+            const level = mapData.levels[player.currentFloor];
+            if (level && level.doors) {
+              for (const d of level.doors) {
+                const hDist = Math.hypot(d.hingeX - player.x, d.hingeY - player.y);
+                const mDist = d.x !== undefined ? Math.hypot(d.x - player.x, d.y - player.y) : 999;
+                if (hDist < 80 || mDist < 80) {
+                  hintText = d.isOpen ? "Press [E] to Close Door" : "Press [E] to Open Door";
+                  break;
+                }
+              }
+            }
+          }
+        }
+
+        if (hintElem) {
+          hintElem.style.display = hintText ? 'block' : 'none';
+          if (hintText) hintElem.textContent = hintText;
+        }
+
+        hintElem.style.display = hintText ? 'block' : 'none';
+        if (hintText) hintElem.textContent = hintText;
+
+        const maxCols = mapData.cols || cfg.MAP_COLS;
+        const maxRows = mapData.rows || cfg.MAP_ROWS;
+        camera.follow(player.x, player.y, maxCols * cfg.TILE_SIZE, maxRows * cfg.TILE_SIZE);
+        
+        window.Game.UI.update(player, matchTimeRemaining);
+
+        // Render Canvas
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        camera.apply(ctx);
+
+        window.Game.MapRenderer.drawLevel(ctx, mapData, player.currentFloor);
+
+        for (const ch of activeChests) {
+          if (ch.floor === player.currentFloor) ch.draw(ctx);
+        }
+        for (const item of groundItems) {
+          if (item.floor === player.currentFloor) item.draw(ctx);
+        }
+        for (const b of bullets) {
+          if (b.floor === player.currentFloor) b.draw(ctx);
+        }
+
+        window.Game.Vision.drawFieldOfView(ctx, player.x, player.y, mapData, player.currentFloor, camera);
+
+        for (const id in remotePlayers) {
+          const rp = remotePlayers[id];
+          if (rp.currentFloor === player.currentFloor) {
+            if (!rp.isDead) {
+              const dist = Math.hypot(rp.x - player.x, rp.y - player.y);
+              if (dist < 44 || window.Game.Vision.hasLineOfSight(player.x, player.y, rp.x, rp.y, mapData, player.currentFloor)) {
+                rp.draw(ctx);
+              }
+            } else if (rp.targetRespawnTime > syncedNow) {
+              const remoteSecondsLeft = Math.ceil((rp.targetRespawnTime - syncedNow) / 1000);
+              ctx.save();
+              ctx.font = 'bold 12px monospace';
+              ctx.fillStyle = '#ef4444';
+              ctx.textAlign = 'center';
+              ctx.fillText(`${rp.name} (DEAD)`, rp.x, rp.y - 20);
+              ctx.fillStyle = '#38bdf8';
+              ctx.fillText(`Redeploy in: ${remoteSecondsLeft}s`, rp.x, rp.y - 6);
+              ctx.restore();
+            }
+          }
+        }
+
+        if (!isLocalDead) {
+          player.draw(ctx);
+        }
+
+        for (const pop of damagePops) {
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, pop.alpha);
+          ctx.font = 'bold 15px -apple-system, monospace';
+          ctx.fillStyle = pop.color;
+          ctx.strokeStyle = '#000000';
+          ctx.lineWidth = 3;
+          ctx.textAlign = 'center';
+          ctx.strokeText(pop.text, pop.x, pop.y);
+          ctx.fillText(pop.text, pop.x, pop.y);
+          ctx.restore();
+        }
+
+        camera.restore(ctx);
+
+        minimap.draw(mapData, player, activeChests, [], camera);
+
+        requestAnimationFrame(gameLoop);
+      }
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    window.addEventListener('DOMContentLoaded', initGame);
+  </script>
+</body>
+</html>
